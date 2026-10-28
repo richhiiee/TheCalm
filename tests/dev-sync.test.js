@@ -257,9 +257,13 @@ test('rollback continues after one restoration fails and reports the preserved b
   const command = '& { function global:Copy-Item { ' +
     '[CmdletBinding()] param([string] $LiteralPath, [string] $Destination, [switch] $Force) ' +
     '$leaf = [IO.Path]::GetFileName($Destination); ' +
-    'if ($Destination.StartsWith($env:CALM_SKIP_TEST_INSTALL + [IO.Path]::DirectorySeparatorChar)) { ' +
-    'if ($leaf -eq "worker.js" -and $LiteralPath -match "stage-") { throw "Simulated deployment write failure" } ' +
-    'if ($leaf -eq "content.js" -and $LiteralPath -match "[\\\\/]backups[\\\\/]") { throw "Simulated restore failure" } ' +
+    // PowerShell resolves Windows 8.3 profile aliases into long paths, unlike
+    // Node's temporary fixture path. Scope the hook to the fixture's exact
+    // install-directory leaf rather than comparing unlike absolute aliases.
+    '$parent = [IO.Path]::GetFileName([IO.Path]::GetDirectoryName($Destination)); ' +
+    'if ($parent -eq [IO.Path]::GetFileName($env:CALM_SKIP_TEST_INSTALL)) { ' +
+    'if ($leaf -eq "worker.js" -and $LiteralPath -match "stage-") { [Console]::Error.WriteLine("TEST: deployment fault injected"); throw "Simulated deployment write failure" } ' +
+    'if ($leaf -eq "content.js" -and $LiteralPath -match "[\\\\/]backups[\\\\/]") { [Console]::Error.WriteLine("TEST: restore fault injected"); throw "Simulated restore failure" } ' +
     '} Microsoft.PowerShell.Management\\Copy-Item @PSBoundParameters }; ' +
     '& ' + quote(SCRIPT) + ' -SourceDirectory ' + quote(h.source) + ' -InstallDirectory ' + quote(h.install) + ' }';
   const result = spawnSync(POWERSHELL, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], {
@@ -267,6 +271,8 @@ test('rollback continues after one restoration fails and reports the preserved b
     env: { ...process.env, CALM_SKIP_TEST_INSTALL: h.install }
   });
   assert.equal(result.status, 1, (result.stdout || '') + (result.stderr || ''));
+  assert.match((result.stdout || '') + (result.stderr || ''), /TEST: deployment fault injected/);
+  assert.match((result.stdout || '') + (result.stderr || ''), /TEST: restore fault injected/);
   assert.equal(await fs.readFile(path.join(h.install, 'popup.js'), 'utf8'), '// initial popup\n', 'later rollback entries must still be restored');
   assert.equal(await fs.readFile(path.join(h.install, 'worker.js'), 'utf8'), '// initial worker\n');
   assert.equal(await fs.readFile(path.join(h.install, 'content.js'), 'utf8'), '// new content needing manual recovery\n');
