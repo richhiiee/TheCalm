@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TheCalm Skip</title>
+    <link rel="stylesheet" href="popup.css">
+    <script src="popup.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header class="brand-row">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 28 28" fill="none"><path d="M5 18c4-10 8 10 12 0s6-5 6-5M5 10c3-6 6 6 9 0s6-6 9 0" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+          </span>
+          <div><h1>TheCalm Skip</h1><p class="brand-caption">More story. Less waiting.</p></div>
+        </div>
+        <span id="mode" class="pill">Auto enabled</span>
+      </header>
+
+      <section class="episode-card" aria-labelledby="episode-title">
+        <span class="eyebrow">NOW WATCHING</span>
+        <h2 id="episode-title">Open an episode</h2>
+        <p id="episode-detail" class="muted">Choose a show on thecalm.site to get started.</p>
+        <div id="status" class="status" role="status" aria-live="polite">Looking for your episode…</div>
+        <dl class="segments" aria-label="Episode skip timestamps">
+          <div><dt><span class="segment-dot recap"></span>Recap</dt><dd id="recap-range">—</dd></div>
+          <div><dt><span class="segment-dot intro"></span>Intro</dt><dd id="intro-range">—</dd></div>
+          <div><dt><span class="segment-dot credits"></span>Credits</dt><dd id="outro-range">—</dd></div>
+        </dl>
+        <p id="source" class="source">Timings supplied by IntroDB</p>
+      </section>
+
+      <section class="controls" aria-label="Automatic skipping settings">
+        <label class="toggle-row main-toggle" for="enabled">
+          <span><strong>Automatic skipping</strong><small id="auto-description">Skips supported segments and briefly confirms afterward.</small></span>
+          <input id="enabled" type="checkbox" role="switch" checked disabled>
+          <span class="switch" aria-hidden="true"></span>
+        </label>
+        <div class="type-settings">
+          <label class="toggle-row" for="skipRecap"><span>Skip recaps</span><input id="skipRecap" type="checkbox" checked disabled><span class="switch" aria-hidden="true"></span></label>
+          <label class="toggle-row" for="skipIntro"><span>Skip intros</span><input id="skipIntro" type="checkbox" checked disabled><span class="switch" aria-hidden="true"></span></label>
+          <label class="toggle-row" for="autoNext"><span>Next episode at credits</span><input id="autoNext" type="checkbox" checked disabled><span class="switch" aria-hidden="true"></span></label>
+        </div>
+      </section>
+
+      <section class="player-card" aria-label="Player compatibility">
+        <div class="player-heading"><span id="player-dot" class="connection-dot"></span><strong id="player-title">Checking player…</strong><span id="player-time" class="muted"></span></div>
+        <p id="player-detail" class="muted">Playback must be accessible before skips can run.</p>
+        <div id="connect-area" hidden>
+          <label class="field-label" for="player-origin">Embedded player</label>
+          <select id="player-origin"></select>
+          <button id="connect" class="button button-primary" type="button">Connect embedded player</button>
+          <p class="help">Brave will ask for access to this player’s website.</p>
+        </div>
+      </section>
+
+      <div class="action-row">
+        <button id="refresh" class="button" type="button" disabled>Refresh timings</button>
+        <button id="undo" class="button" type="button" disabled>Undo last skip</button>
+      </div>
+
+      <section id="mapping-area" class="setup-card" aria-labelledby="mapping-heading" hidden>
+        <h2 id="mapping-heading">Identify this show</h2>
+        <p class="muted">This page doesn’t provide a show ID. Enter its IMDb series ID once; episode numbers are detected automatically.</p>
+        <form id="mapping-form">
+          <label class="field-label" for="imdb-id">IMDb series ID</label>
+          <div class="input-row"><input id="imdb-id" name="imdb-id" type="text" placeholder="tt0455275" pattern="tt[0-9]{7,10}" autocomplete="off" spellcheck="false" required><button id="save-mapping" class="button" type="submit">Save</button></div>
+        </form>
+      </section>
+
+      <details class="import-area">
+        <summary>Import an IntroDB response</summary>
+        <p class="muted">If a lookup is unavailable, paste its JSON response. It must match the current show and episode.</p>
+        <label class="sr-only" for="import-json">IntroDB JSON response</label>
+        <textarea id="import-json" rows="4" placeholder='{"imdb_id":"tt…","season":1,"episode":1,…}' autocomplete="off" spellcheck="false"></textarea>
+        <button id="import" class="button" type="button" disabled>Import timings</button>
+      </details>
+
+      <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+      <footer><span id="build-version"></span> Settings and imported timings stay in your browser. Episode lookups go to IntroDB.</footer>
+    </main>
+  </body>
+</html>

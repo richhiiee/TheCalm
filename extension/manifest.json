@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "TheCalm Skip",
+  "version": "0.1.3",
+  "description": "Skip intros and recaps on TheCalm using IntroDB community timestamps.",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "activeTab", "scripting", "webNavigation"],
+  "host_permissions": [
+    "https://thecalm.site/*",
+    "https://www.thecalm.site/*",
+    "https://api.introdb.app/*"
+  ],
+  "optional_host_permissions": ["https://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "TheCalm Skip" },
+  "content_scripts": [{
+    "matches": ["https://thecalm.site/*", "https://www.thecalm.site/*"],
+    "js": ["shared.js", "content.js"],
+    "run_at": "document_idle",
+    "all_frames": true
+  }]
+}

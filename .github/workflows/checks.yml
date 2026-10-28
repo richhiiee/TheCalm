@@ -1,0 +1,59 @@
+name: Checks
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Test extension logic
+        run: npm test
+
+      - name: Test development sync
+        run: npm run test:dev-sync
+        env:
+          CALM_SKIP_PWSH: pwsh
+
+      - name: Install browser for tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Select the installed browser
+        run: echo "CHROMIUM_PATH=$(node -p 'require("playwright").chromium.executablePath()')" >> "$GITHUB_ENV"
+
+      - name: Test browser and media behavior
+        run: npm run test:browser
+
+      - name: Package the extension
+        run: npm run package
+
+      - name: Upload tested extension package
+        uses: actions/upload-artifact@v7
+        with:
+          name: thecalm-skip
+          path: dist/thecalm-skip.zip
+          if-no-files-found: error
+          retention-days: 14

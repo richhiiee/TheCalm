@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Prison Break S01E18 — TheCalm fixture</title>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"TVEpisode","episodeNumber":18,"partOfSeason":{"@type":"TVSeason","seasonNumber":1},"partOfSeries":{"@type":"TVSeries","name":"Prison Break","sameAs":"https://www.imdb.com/title/tt0455275/"}}</script>
+  <style>body{margin:24px;background:#141b25;color:white;font:18px sans-serif}video{display:block;width:640px;height:360px;background:#000}a{color:#8de0cf}button{margin:12px}</style>
+</head>
+<body>
+  <h1>Prison Break — Season 1, Episode 18</h1>
+  <video id="episode-video" controls muted preload="metadata" src="/fixture-media.wav"></video>
+  <a id="next-episode" rel="next" href="/shows/prison-break/season-1/episode-19">Next episode</a>
+  <script>
+    window.fixture = {
+      async seek(time, play = true) {
+        const video = document.querySelector('video');
+        if (video.readyState === 0) await new Promise(resolve => video.addEventListener('loadedmetadata', resolve, { once: true }));
+        video.currentTime = time;
+        if (play) await video.play(); else video.pause();
+      },
+      navigate(episode) {
+        history.pushState({}, '', '/shows/prison-break/season-1/episode-' + episode);
+        document.title = 'Prison Break S01E' + episode + ' — TheCalm fixture';
+        document.querySelector('h1').textContent = 'Prison Break — Season 1, Episode ' + episode;
+        const video = document.querySelector('video');
+        video.pause();
+        video.currentTime = 0;
+      }
+    };
+  </script>
+</body>
+</html>
