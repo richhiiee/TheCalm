@@ -88,6 +88,21 @@ function Assert-Resource([string] $Root, [string] $Relative) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing extension resource: $Relative" }
 }
 
+function Get-ResourceHash([string] $Path) {
+    Assert-NoReparsePath $Path
+    $stream = $null
+    $algorithm = $null
+    try {
+        $stream = [IO.File]::OpenRead($Path)
+        $algorithm = [Security.Cryptography.SHA256]::Create()
+        return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '')
+    }
+    finally {
+        if ($null -ne $algorithm) { $algorithm.Dispose() }
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+
 function Add-Properties($Object, $List) {
     if ($null -eq $Object) { return }
     foreach ($property in $Object.PSObject.Properties) { $List.Add([string] $property.Value) }
@@ -193,8 +208,16 @@ function Get-ValidatedManifest([string] $Root) {
 }
 
 function Invoke-Git([string[]] $Arguments) {
-    $result = @(& git -C $SourceDirectory @Arguments 2>&1)
-    if ($LASTEXITCODE -ne 0) { throw "Git '$($Arguments[0])' failed (exit $LASTEXITCODE). Check the checkout and GitHub sign-in; no installation files were changed." }
+    $previousPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 wraps native stderr in ErrorRecords. Capture
+        # that output, then inspect Git's actual exit status explicitly.
+        $ErrorActionPreference = 'Continue'
+        $result = @(& git -C $SourceDirectory @Arguments 2>&1)
+        $gitExitCode = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $previousPreference }
+    if ($gitExitCode -ne 0) { throw "Git '$($Arguments[0])' failed (exit $gitExitCode). Check the checkout and GitHub sign-in; no installation files were changed." }
     return ($result -join "`n").Trim()
 }
 
@@ -254,13 +277,13 @@ function Invoke-Sync {
     $entries = @()
     $changes = @()
     foreach ($file in $sourceFiles) {
-        $hash = (Get-FileHash -LiteralPath $file.Path -Algorithm SHA256).Hash
+        $hash = Get-ResourceHash $file.Path
         $entries += [PSCustomObject] @{ path = $file.Relative; sha256 = $hash }
         $destination = Get-ResourcePath $InstallDirectory $file.Relative
         if ((Test-Path -LiteralPath $destination) -and -not (Test-Path -LiteralPath $destination -PathType Leaf)) {
             throw "A directory conflicts with a managed extension file: $destination"
         }
-        if (-not (Test-Path -LiteralPath $destination -PathType Leaf) -or (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $hash) { $changes += $file.Relative }
+        if (-not (Test-Path -LiteralPath $destination -PathType Leaf) -or (Get-ResourceHash $destination) -ne $hash) { $changes += $file.Relative }
     }
     $removals = @()
     if ($null -ne $saved) {
@@ -268,7 +291,7 @@ function Invoke-Sync {
             if (@($entries.path) -contains $entry.path) { continue }
             $oldPath = Get-ResourcePath $InstallDirectory ([string] $entry.path)
             if (Test-Path -LiteralPath $oldPath -PathType Leaf) {
-                if ((Get-FileHash -LiteralPath $oldPath -Algorithm SHA256).Hash -eq $entry.sha256) { $removals += [string] $entry.path }
+                if ((Get-ResourceHash $oldPath) -eq $entry.sha256) { $removals += [string] $entry.path }
                 else { Write-Warning "Preserved modified retired resource: $($entry.path)" }
             }
         }
@@ -288,7 +311,7 @@ function Invoke-Sync {
             $staged = Get-ResourcePath $stage $file.Relative
             $null = New-Item -ItemType Directory -Path (Split-Path -Parent $staged) -Force
             Copy-Item -LiteralPath $file.Path -Destination $staged
-            if ((Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash -ne ($entries | Where-Object { $_.path -eq $file.Relative }).sha256) {
+            if ((Get-ResourceHash $staged) -ne ($entries | Where-Object { $_.path -eq $file.Relative }).sha256) {
                 throw 'A source file changed while being staged. Save your edits, then retry.'
             }
         }
