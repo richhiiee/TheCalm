@@ -77,7 +77,7 @@ npm run package
 
 Node 20 or newer is required. The extension itself has no runtime dependencies and needs no build step. Playwright is a pinned development dependency. Browser tests use the system `/usr/bin/chromium`; set `CHROMIUM_PATH` if it is elsewhere. There is no browser download during installation. ZIP packaging uses Python 3.
 
-The Windows sync script only needs Git and PowerShell 5.1 or later; it does not need Node or Python. Its test suite requires PowerShell (`powershell.exe` on Windows or `pwsh` elsewhere); `CALM_SKIP_PWSH` can select an explicit executable. Tests also run in CI. The cloud validation uses PowerShell 7 on Linux and does not establish that the updater has run on the user's Windows computer.
+The Windows sync script only needs Git and PowerShell 5.1 or later; it does not need Node or Python. Its test suite requires PowerShell (`powershell.exe` on Windows or `pwsh` elsewhere); `CALM_SKIP_PWSH` can select an explicit executable. CI includes both Windows PowerShell 5.1 and PowerShell on Linux. These checks do not establish that the updater has run on the user's computer or changed its installed extension.
 
 Unit tests cover identity and timestamp validation, zero-start recaps, cold opens, per-segment bounds/confidence checks, automatic-default migration, preserved pause preferences, cache behavior, timeouts/provider errors, imported JSON, on-action authorization, embedded-frame associations, and deduplicated injection. Browser tests exercise the production player scripts with real, seekable synthetic media and a simulated extension API. Performance regressions count full-document scans and message traffic during large-page text updates and on non-episode pages. No movie files are included or downloaded.
 

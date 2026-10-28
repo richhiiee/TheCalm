@@ -10,6 +10,31 @@ permissions:
   contents: read
 
 jobs:
+  windows-sync:
+    name: Windows PowerShell 5.1 sync
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Test Windows PowerShell development sync
+        run: npm run test:dev-sync
+        env:
+          CALM_SKIP_PWSH: powershell.exe
+
   validate:
     name: Test and package
     runs-on: ubuntu-latest
