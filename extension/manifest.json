@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CalmSkip",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Automatically skip intros and recaps on TheCalm, then move to the next episode at credits using IntroDB timestamps.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "scripting", "webNavigation"],

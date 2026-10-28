@@ -1,0 +1,46 @@
+{
+  "result": {
+    "data": [
+      {
+        "source": "imdb",
+        "displayTitle": "Better Call Saul",
+        "year": 2015,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/fC2HDm5t0kHl7mTm7jxMR31b7by.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt3032476",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Better Call Saul Presents: Slippin' Jimmy",
+        "year": 2022,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/wSeVvdVWUMnANCyhn963T99HPhF.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt20516438",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Better Call Saul: Los Pollos Hermanos Employee Training",
+        "year": 2017,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/r4XJEZlMpzPOeFtdF58T8gRvOJC.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt7435402",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Better Call Saul: Ethics Training with Kim Wexler",
+        "year": 2020,
+        "posterUrl": null,
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt12059644",
+        "mediaType": "tv"
+      }
+    ]
+  }
+}

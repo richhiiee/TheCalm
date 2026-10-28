@@ -4,7 +4,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const settingsKeys = ["enabled", "skipRecap", "skipIntro", "autoNext"];
-  const view = { tabId: null, onSite: false, response: null, player: null, busy: false };
+  const view = { tabId: null, onSite: false, response: null, player: null, busy: false, editMapping: false };
 
   function formatTime(seconds) {
     if (!Number.isFinite(seconds) || seconds < 0) return "—";
@@ -45,6 +45,9 @@
     $("refresh").disabled = view.busy || !context?.imdbId;
     $("import").disabled = view.busy || !context?.imdbId || !$("import-json").value.trim();
     $("save-mapping").disabled = view.busy || !context?.slug;
+    $("change-show").disabled = view.busy || !context?.slug;
+    $("show-match").disabled = view.busy;
+    $("use-show-match").disabled = view.busy || !context?.slug || !$("show-match").value;
     $("undo").disabled = view.busy || !view.player?.canUndo;
     $("connect").disabled = view.busy || !$("player-origin").value;
   }
@@ -56,6 +59,7 @@
   }
 
   function renderContext(response) {
+    if (view.response?.context?.slug !== response.context?.slug) view.editMapping = false;
     view.response = response;
     const { context, settings, timings, status, error } = response;
     $("episode-title").textContent = context ? prettyTitle(context.slug) : "Open an episode";
@@ -75,11 +79,30 @@
     $("source").textContent = counts.length && counts.every((count) => count === counts[0])
       ? `IntroDB · ${counts[0]} community contribution${counts[0] === 1 ? "" : "s"} per segment`
       : "Timings supplied by IntroDB";
-    $("mapping-area").hidden = !context || Boolean(context.imdbId);
+    $("mapping-area").hidden = !context || (Boolean(context.imdbId) && !view.editMapping);
+    $("change-show").setAttribute("aria-expanded", String(!$("mapping-area").hidden));
+    const choices = Array.isArray(response.identificationCandidates) ? response.identificationCandidates : [];
+    const matches = $("show-match"), previousMatch = matches.value;
+    matches.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = ""; placeholder.textContent = "Choose a series…";
+    matches.append(placeholder);
+    const seen = new Set();
+    for (const candidate of choices.slice(0, 20)) {
+      if (!/^tt\d{7,10}$/.test(candidate?.imdbId || "") || typeof candidate.title !== "string" || seen.has(candidate.imdbId)) continue;
+      seen.add(candidate.imdbId);
+      const option = document.createElement("option"); option.value = candidate.imdbId;
+      const label = candidate.title + (Number.isInteger(candidate.year) ? ` (${candidate.year})` : "");
+      const duplicates = choices.filter(item => item.title === candidate.title && item.year === candidate.year).length > 1;
+      option.textContent = label + (duplicates ? ` · ${candidate.imdbId}` : "");
+      matches.append(option);
+    }
+    if (seen.has(previousMatch)) matches.value = previousMatch;
+    $("show-matches").hidden = !seen.size;
     const messages = {
       ready: "Timings found. Supported segments skip automatically when enabled.",
       missing: "IntroDB has no usable timings for this episode. Playback stays unchanged.",
-      unidentified: "Identify this show below to look up its timestamps.",
+      unidentified: response.identificationReason || "Identify this show below to look up its timestamps.",
       error: error || "The timing lookup failed. You can retry or import an IntroDB response.",
     };
     $("status").textContent = !context
@@ -99,7 +122,8 @@
     view.player = player;
     const hasVideo = Boolean(player?.videoFound);
     const safe = Boolean(player?.safety?.ok);
-    $("player-title").textContent = hasVideo ? (safe ? "Player ready" : "Player needs review") : "Player not detected";
+    const awaitingTimings = !view.response?.timings?.hasData;
+    $("player-title").textContent = hasVideo ? (safe ? "Player ready" : awaitingTimings ? "Player connected" : "Player needs review") : "Player not detected";
     $("player-dot").classList.toggle("connected", hasVideo && safe);
     $("player-dot").classList.toggle("warning", hasVideo && !safe);
     $("player-time").textContent = hasVideo && Number.isFinite(player.duration)
@@ -199,7 +223,23 @@
     event.preventDefault();
     const imdbId = $("imdb-id").value.trim();
     if (!/^tt\d{7,10}$/.test(imdbId)) return feedback("Enter an IMDb series ID such as tt0455275.", true);
-    perform(() => request("SET_MAPPING", { slug: view.response.context.slug, imdbId }), "Show identified. Future episodes use this series ID.");
+    perform(async () => { await request("SET_MAPPING", { slug: view.response.context.slug, imdbId }); view.editMapping = false; }, "Show identified. Future episodes use this series ID.");
+  });
+
+  $("change-show").addEventListener("click", () => {
+    if (!view.response?.context) return;
+    view.editMapping = !view.editMapping;
+    $("mapping-area").hidden = !view.editMapping && Boolean(view.response.context.imdbId);
+    $("change-show").setAttribute("aria-expanded", String(!$("mapping-area").hidden));
+    $("imdb-id").value = view.response.context.imdbId || "";
+    if (!$("mapping-area").hidden) $("imdb-id").focus();
+  });
+
+  $("show-match").addEventListener("change", refreshButtons);
+  $("use-show-match").addEventListener("click", () => {
+    const imdbId = $("show-match").value;
+    if (!/^tt\d{7,10}$/.test(imdbId) || !view.response?.context?.slug) return;
+    perform(async () => { await request("SET_MAPPING", { slug: view.response.context.slug, imdbId }); view.editMapping = false; }, "Show selected. Future episodes use this series.");
   });
 
   $("connect").addEventListener("click", async () => {
@@ -216,7 +256,7 @@
   });
 
   async function initialize() {
-    $("build-version").textContent = `CalmSkip v${chrome.runtime.getManifest?.().version || "0.1.5"}.`;
+    $("build-version").textContent = `CalmSkip v${chrome.runtime.getManifest?.().version || "0.1.6"}.`;
     setBusy(true);
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

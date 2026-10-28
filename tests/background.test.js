@@ -480,3 +480,254 @@ test("only the current main episode page can request an event-driven player reco
   assert.equal((await h.runtime.dispatch(request, h.top)).ok, false);
   assert.deepEqual(connected, [7]);
 });
+
+const bcsSearch = require('./fixtures/introdb-search-better-call-saul.json');
+const simpsonsSearch = require('./fixtures/introdb-search-the-simpsons.json');
+const ghostsSearch = require('./fixtures/introdb-search-ghosts.json');
+const bcsSegments = require('./fixtures/better-call-saul-s01e01.json');
+const simpsonsSegments = require('./fixtures/simpsons-s13e03.json');
+const seriesUrl = (slug, season = 1, episode = 1) => `https://thecalm.site/shows/${slug}/season-${season}/episode-${episode}`;
+const searchQuery = url => JSON.parse(new URL(url).searchParams.get('input')).query;
+const isSearch = url => new URL(url).pathname === '/trpc/metadata.searchMedia';
+
+test('an unmapped show is identified once by an exact TV match and cached separately across worker restarts', async () => {
+  const requests = [];
+  const h = setup(async (url, options) => {
+    requests.push(url);
+    assert.equal(options.credentials, 'omit');
+    assert.equal(options.referrerPolicy, 'no-referrer');
+    if (isSearch(url)) {
+      assert.equal(searchQuery(url), 'better call saul');
+      return new Response(JSON.stringify(bcsSearch));
+    }
+    assert.equal(url, 'https://api.introdb.app/segments?imdb_id=tt3032476&season=1&episode=1');
+    return new Response(JSON.stringify(bcsSegments));
+  });
+  h.tabs.set(7, { id: 7, url: seriesUrl('better-call-saul') });
+  const results = await Promise.all([
+    h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup),
+    h.runtime.dispatch({ type: 'GET_CONTEXT' }, h.frame),
+  ]);
+  for (const result of results) {
+    assert.equal(result.status, 'ready');
+    assert.equal(result.context.imdbId, 'tt3032476');
+    assert.equal(result.timings.segments.intro.start, 360.5);
+    assert.equal(result.timings.segments.intro.end, 375);
+  }
+  assert.equal(requests.filter(isSearch).length, 1);
+  assert.equal(requests.length, 2, 'simultaneous contexts coalesce both identification and timestamps');
+  assert.equal(h.data.showMappings, undefined, 'automatic matches must not overwrite manual mappings');
+  assert.equal(h.data.showIdentityCache['better-call-saul'].imdbId, 'tt3032476');
+  assert.equal(JSON.stringify(h.data.showIdentityCache).includes('posterUrl'), false, 'poster metadata is not retained or fetched');
+  const restarted = createBackgroundRuntime(h.chrome, async () => { throw new Error('cached show/timings must survive worker restart'); });
+  const result = await restarted.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+  assert.equal(result.status, 'ready');
+  const authorized = await restarted.dispatch({ type: 'AUTHORIZE_SKIP', episodeKey: 'better-call-saul:1:1:tt3032476', segmentType: 'intro', currentTime: 361, duration: 3182 }, h.frame);
+  assert.equal(authorized.authorized, true, JSON.stringify(authorized));
+});
+
+test('a correctly identified series without timestamps is missing coverage, not unidentified', async () => {
+  const h = setup(async url => new Response(JSON.stringify(isSearch(url) ? simpsonsSearch : simpsonsSegments)));
+  h.tabs.set(7, { id: 7, url: seriesUrl('the-simpsons', 13, 3) });
+  const result = await h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+  assert.equal(result.context.imdbId, 'tt0096697');
+  assert.equal(result.context.season, 13);
+  assert.equal(result.context.episode, 3);
+  assert.equal(result.status, 'missing');
+  assert.equal(result.timings.hasData, false);
+});
+
+test('ambiguous exact matches expose valid series choices and never select the first remake', async () => {
+  let calls = 0;
+  const h = setup(async url => {
+    calls++;
+    assert.equal(isSearch(url), true, 'an ambiguous match must never request another series timestamps');
+    return new Response(JSON.stringify(ghostsSearch));
+  });
+  h.tabs.set(7, { id: 7, url: seriesUrl('ghosts') });
+  const result = await h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+  assert.equal(result.status, 'unidentified');
+  assert.equal(result.context.imdbId, null);
+  assert.equal(result.identificationStatus, 'ambiguous');
+  assert.equal(result.identificationCandidates.length, 4);
+  assert.ok(result.identificationCandidates.some(item => item.imdbId === 'tt11379026' && item.year === 2021));
+  await h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+  assert.equal(calls, 1, 'ambiguity is cached instead of repeatedly searching during playback');
+});
+
+test('complete numeric titles take precedence over year suffixes, and explicit remake years disambiguate', async () => {
+  for (const [slug, search, expected] of [
+    ['space-1999', [{ source: 'imdb', displayTitle: 'Space: 1999', year: 1975, imdbId: 'tt0072564', mediaType: 'tv' }], 'tt0072564'],
+    ['doctor-who-2005', [
+      { source: 'imdb', displayTitle: 'Doctor Who', year: 1963, imdbId: 'tt0056751', mediaType: 'tv' },
+      { source: 'imdb', displayTitle: 'Doctor Who', year: 2005, imdbId: 'tt0436992', mediaType: 'tv' },
+    ], 'tt0436992'],
+    ['ghosts-2021', ghostsSearch.result.data, 'tt11379026'],
+  ]) {
+    const h = setup(async url => isSearch(url) ? new Response(JSON.stringify({ result: { data: search } })) : new Response('', { status: 404 }));
+    h.tabs.set(7, { id: 7, url: seriesUrl(slug) });
+    const result = await h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+    assert.equal(result.context.imdbId, expected, slug);
+    assert.equal(result.status, 'missing', slug);
+  }
+});
+
+test('fuzzy results, movies, and invalid IDs do not identify a show, and negative lookups expire', async () => {
+  let now = 1000, calls = 0;
+  const h = setup(async url => {
+    calls++;
+    assert.equal(isSearch(url), true);
+    return new Response(JSON.stringify({ result: { data: [
+      { source: 'imdb', displayTitle: 'Unseen Plus', year: 2020, imdbId: 'tt1234567', mediaType: 'tv' },
+      { source: 'imdb', displayTitle: 'Unseen', year: 2020, imdbId: 'tt7654321', mediaType: 'movie' },
+      { source: 'imdb', displayTitle: 'Unseen', year: 2020, imdbId: 'bad', mediaType: 'tv' },
+    ] } }));
+  }, { now: () => now });
+  h.tabs.set(7, { id: 7, url: seriesUrl('unseen') });
+  assert.equal((await h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup)).identificationStatus, 'not-found');
+  await h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+  assert.equal(calls, 1);
+  now += MISSING_TTL + 1;
+  await h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+  assert.equal(calls, 2);
+});
+
+test('show-search failures and changed response shapes remain retryable and are never cached as missing', async () => {
+  for (const fetcher of [
+    async () => { throw new TypeError('offline'); },
+    async () => new Response('', { status: 503 }),
+    async () => new Response('not-json'),
+    async () => new Response(JSON.stringify({ result: { data: { unexpected: [] } } })),
+    async () => new Response('x'.repeat(128001)),
+  ]) {
+    let calls = 0;
+    const h = setup(async () => { calls++; return fetcher(); });
+    h.tabs.set(7, { id: 7, url: seriesUrl('better-call-saul') });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+      assert.equal(result.status, 'error');
+      assert.equal(result.identificationStatus, 'error');
+      assert.equal(result.context.imdbId, null);
+      assert.equal(h.data.showIdentityCache, undefined);
+    }
+    assert.equal(calls, 2);
+  }
+});
+
+test('show identification times out without creating a negative cache record', async () => {
+  const h = setup((url, options) => new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+  }), { timeoutMs: 5 });
+  h.tabs.set(7, { id: 7, url: seriesUrl('better-call-saul') });
+  const result = await h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+  assert.equal(result.status, 'error');
+  assert.match(result.error, /identification timed out/);
+  assert.equal(h.data.showIdentityCache, undefined);
+});
+
+test('a manual mapping made during a slow automatic lookup wins before timings or authorization', async () => {
+  let release;
+  const segmentRequests = [];
+  const h = setup(async url => {
+    if (isSearch(url)) {
+      await new Promise(resolve => { release = resolve; });
+      return new Response(JSON.stringify({ result: { data: [{ source: 'imdb', displayTitle: 'Better Call Saul', year: 2015, imdbId: 'tt9999999', mediaType: 'tv' }] } }));
+    }
+    segmentRequests.push(new URL(url).searchParams.get('imdb_id'));
+    return new Response(JSON.stringify(bcsSegments));
+  });
+  h.tabs.set(7, { id: 7, url: seriesUrl('better-call-saul') });
+  const pending = h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  await h.runtime.dispatch({ type: 'SET_MAPPING', tabId: 7, slug: 'better-call-saul', imdbId: 'tt3032476' }, h.popup);
+  release();
+  const result = await pending;
+  assert.equal(result.context.imdbId, 'tt3032476');
+  assert.equal(h.data.showMappings['better-call-saul'], 'tt3032476');
+  assert.deepEqual(segmentRequests, ['tt3032476']);
+  const authorized = await h.runtime.dispatch({ type: 'AUTHORIZE_SKIP', episodeKey: 'better-call-saul:1:1:tt3032476', segmentType: 'intro', currentTime: 361, duration: 3182 }, h.frame);
+  assert.equal(authorized.authorized, true);
+});
+
+test('navigation during show lookup discards the old context before requesting its timings', async () => {
+  let release;
+  const segmentRequests = [];
+  const h = setup(async url => {
+    if (isSearch(url)) {
+      if (searchQuery(url) === 'better call saul') {
+        await new Promise(resolve => { release = resolve; });
+        return new Response(JSON.stringify(bcsSearch));
+      }
+      return new Response(JSON.stringify(simpsonsSearch));
+    }
+    segmentRequests.push(new URL(url).searchParams.get('imdb_id'));
+    return new Response(JSON.stringify(simpsonsSegments));
+  });
+  h.tabs.set(7, { id: 7, url: seriesUrl('better-call-saul') });
+  const pending = h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  h.tabs.set(7, { id: 7, url: seriesUrl('the-simpsons', 13, 3) });
+  release();
+  const result = await pending;
+  assert.equal(result.context.imdbId, 'tt0096697');
+  assert.equal(result.status, 'missing');
+  assert.deepEqual(segmentRequests, ['tt0096697']);
+});
+
+test('identity cache writes merge parallel shows and evict old entries at their size bound', async () => {
+  const identities = {};
+  for (let i = 0; i < 100; i++) identities[`cached-${i}`] = { schema: 1, slug: `cached-${i}`, status: 'matched', imdbId: 'tt1234567', fetchedAt: i, expiresAt: CACHE_TTL };
+  const h = setup(async url => isSearch(url) ? new Response(JSON.stringify(searchQuery(url) === 'better call saul' ? bcsSearch : simpsonsSearch)) :
+    new Response(JSON.stringify(new URL(url).searchParams.get('imdb_id') === 'tt3032476' ? bcsSegments : simpsonsSegments)), { now: () => 1000, initialData: { showIdentityCache: identities } });
+  h.tabs.set(7, { id: 7, url: seriesUrl('better-call-saul') });
+  h.tabs.set(9, { id: 9, url: seriesUrl('the-simpsons', 13, 3) });
+  const result = await Promise.all([h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup), h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 9 }, h.popup)]);
+  assert.equal(result[0].status, 'ready');
+  assert.equal(result[1].status, 'missing');
+  assert.equal(Object.keys(h.data.showIdentityCache).length, 100);
+  assert.equal(h.data.showIdentityCache['cached-0'], undefined);
+  assert.equal(h.data.showIdentityCache['cached-1'], undefined);
+  assert.equal(h.data.showIdentityCache['better-call-saul'].imdbId, 'tt3032476');
+  assert.equal(h.data.showIdentityCache['the-simpsons'].imdbId, 'tt0096697');
+});
+
+test('punctuated acronyms match their normal site slugs without fuzzy title selection', async () => {
+  for (const [slug, title, imdbId] of [
+    ['swat', 'S.W.A.T.', 'tt6111130'],
+    ['the-oc', 'The O.C.', 'tt0362359'],
+    ['agents-of-shield', 'Agents of S.H.I.E.L.D.', 'tt2364582'],
+  ]) {
+    const h = setup(async url => isSearch(url) ? new Response(JSON.stringify({ result: { data: [
+      { source: 'imdb', displayTitle: title + ': Behind the Scenes', year: 2020, imdbId: 'tt9999999', mediaType: 'tv' },
+      { source: 'imdb', displayTitle: title, year: 2010, imdbId, mediaType: 'tv' },
+    ] } })) : new Response('', { status: 404 }));
+    h.tabs.set(7, { id: 7, url: seriesUrl(slug) });
+    assert.equal((await h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup)).context.imdbId, imdbId, slug);
+  }
+});
+
+test('late metadata and independent mapping writes preserve an explicit series choice', async () => {
+  const h = setup(async url => {
+    assert.equal(isSearch(url), false, 'primary or manual identity must not need a name lookup');
+    return new Response(JSON.stringify(bcsSegments));
+  }, { initialData: { settingsSchemaVersion: SETTINGS_SCHEMA_VERSION } });
+  h.tabs.set(7, { id: 7, url: seriesUrl('better-call-saul') });
+  const set = h.chrome.storage.local.set;
+  let release;
+  h.chrome.storage.local.set = async value => {
+    if (value.showMappings?.['better-call-saul'] === 'tt9999999') await new Promise(resolve => { release = resolve; });
+    return set(value);
+  };
+  const automatic = h.runtime.dispatch({ type: 'SET_EPISODE', url: seriesUrl('better-call-saul'), imdbId: 'tt9999999' }, h.top);
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  const manual = h.runtime.dispatch({ type: 'SET_MAPPING', tabId: 7, slug: 'better-call-saul', imdbId: 'tt3032476' }, h.popup);
+  release();
+  await Promise.all([automatic, manual]);
+  assert.equal(h.data.showMappings['better-call-saul'], 'tt3032476');
+  // Metadata received after the user's write must also keep that selection.
+  await h.runtime.dispatch({ type: 'SET_EPISODE', url: seriesUrl('better-call-saul'), imdbId: 'tt9999999' }, h.top);
+  assert.equal(h.data.showMappings['better-call-saul'], 'tt3032476');
+  const result = await h.runtime.dispatch({ type: 'GET_CONTEXT', tabId: 7 }, h.popup);
+  assert.equal(result.context.imdbId, 'tt3032476');
+  assert.equal(result.status, 'ready');
+});

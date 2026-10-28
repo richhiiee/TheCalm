@@ -1,0 +1,30 @@
+{
+  "imdb_id": "tt3032476",
+  "media_type": "tv",
+  "is_movie": false,
+  "season": 1,
+  "episode": 1,
+  "intro": {
+    "start_sec": 360.5,
+    "end_sec": 375,
+    "start_ms": 360500,
+    "end_ms": 375000,
+    "confidence": 1,
+    "submission_count": 2,
+    "updated_at": "2026-04-08T19:30:10.851Z"
+  },
+  "recap": null,
+  "outro": {
+    "start_sec": 3138,
+    "end_sec": 3182,
+    "start_ms": 3138000,
+    "end_ms": 3182000,
+    "confidence": 1,
+    "submission_count": 1,
+    "updated_at": "2026-04-08T19:30:25.666Z"
+  },
+  "post_credits": null,
+  "no_intro": false,
+  "no_recap": false,
+  "no_outro": false
+}

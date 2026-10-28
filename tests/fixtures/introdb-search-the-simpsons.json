@@ -1,0 +1,76 @@
+{
+  "result": {
+    "data": [
+      {
+        "source": "imdb",
+        "displayTitle": "The Simpsons",
+        "year": 1989,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/tf0CUEynk6GfmrlHIQKQ5mfFP5P.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt0096697",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "The Simpsons Movie",
+        "year": 2007,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/s3b8TZWwmkYc2KoJ5zk77qB6PzY.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt0462538",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "The Simpsons: Tracey Ullman Shorts",
+        "year": 1987,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/7WuN0kUwbfrGtf8St6hujkzzSaj.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt12294152",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "The Simpsons in Plusaversary",
+        "year": 2021,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/p5jzbffrXuBTjsiwrQ3aOMTrvCj.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt15829632",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "The Simpsons 20th Anniversary Special: In 3-D! On Ice!",
+        "year": 2010,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/va17NLaPdfJikfCWkPaWbnOfVSf.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt1572507",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "The Simpsons: Family Portrait",
+        "year": 1988,
+        "posterUrl": null,
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt0446466",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "The Simpsons: Family Therapy",
+        "year": 1989,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/4J31AMYv6xSGC7Qovdqk31mukqG.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt0439812",
+        "mediaType": "movie"
+      }
+    ]
+  }
+}

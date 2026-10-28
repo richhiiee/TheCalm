@@ -13,11 +13,14 @@
     const clock = options.now || Date.now;
     const timeoutMs = options.timeoutMs || 10000;
     const inflight = new Map();
+    const identityInflight = new Map();
     const playbackByTab = new Map();
     const contextsByTab = new Map();
     const cacheVersions = new Map();
     const players = options.players || root.CalmPlayers;
     let cacheWriteQueue = Promise.resolve();
+    let identityWriteQueue = Promise.resolve();
+    let mappingWriteQueue = Promise.resolve();
     let settingsInitialization;
 
     function initializeSettings() {
@@ -37,8 +40,8 @@
 
     async function readState() {
       await initializeSettings();
-      const data = await chromeApi.storage.local.get(["settings", "showMappings", "timingCache"]);
-      return { settings: Core.sanitizeSettings(data.settings), mappings: data.showMappings && typeof data.showMappings === "object" ? data.showMappings : {}, cache: data.timingCache && typeof data.timingCache === "object" ? data.timingCache : {} };
+      const data = await chromeApi.storage.local.get(["settings", "showMappings", "timingCache", "showIdentityCache"]);
+      return { settings: Core.sanitizeSettings(data.settings), mappings: data.showMappings && typeof data.showMappings === "object" ? data.showMappings : {}, cache: data.timingCache && typeof data.timingCache === "object" ? data.timingCache : {}, identities: data.showIdentityCache && typeof data.showIdentityCache === "object" ? data.showIdentityCache : {} };
     }
 
     function isPopup(sender) {
@@ -93,6 +96,19 @@
       await Promise.all(tabs.map(tab => notifyTab(tab.id)));
     }
 
+    async function storeMapping(slug, imdbId, automatic = false) {
+      const write = mappingWriteQueue.catch(() => {}).then(async () => {
+        await initializeSettings();
+        const stored = await chromeApi.storage.local.get("showMappings");
+        const mappings = stored.showMappings && typeof stored.showMappings === "object" ? stored.showMappings : {};
+        // Page metadata may arrive after a user chooses a series. Re-read
+        // inside the serialized write so explicit choices always take priority.
+        if (!automatic || !Object.hasOwn(mappings, slug)) await chromeApi.storage.local.set({ showMappings: { ...mappings, [slug]: imdbId } });
+      });
+      mappingWriteQueue = write;
+      await write;
+    }
+
     function rawProjection(data) {
       if (!data) return null;
       const raw = { imdb_id: data.imdbId, media_type: "tv", is_movie: false, season: data.season, episode: data.episode };
@@ -117,6 +133,86 @@
       });
       cacheWriteQueue = write;
       await write;
+    }
+
+    function normalizedTitle(value) {
+      return String(value || "").normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase()
+        .replace(/[\u2018\u2019']/g, "").replace(/&/g, "and").replace(/[^\p{L}\p{N}]+/gu, "");
+    }
+
+    function identityResult(entry, slug) {
+      if (entry?.schema !== 1 || entry.slug !== slug || !Number.isFinite(entry.expiresAt) || !(entry.expiresAt > clock()) || !["matched", "ambiguous", "not-found"].includes(entry.status)) return null;
+      if (entry.status === "matched" && !Core.normalizeImdbId(entry.imdbId)) return null;
+      const candidates = Array.isArray(entry.candidates) ? entry.candidates.filter(item =>
+        Core.normalizeImdbId(item?.imdbId) && typeof item.title === "string" && item.title.length <= 250 &&
+        (item.year === null || Number.isInteger(item.year))).slice(0, 25) : [];
+      if (entry.status === "ambiguous" && new Set(candidates.map(item => item.imdbId)).size < 2) return null;
+      return {
+        status: entry.status, imdbId: entry.status === "matched" ? Core.normalizeImdbId(entry.imdbId) : null,
+        reason: typeof entry.reason === "string" ? entry.reason : undefined, candidates: entry.status === "ambiguous" ? candidates : [],
+      };
+    }
+
+    async function storeIdentity(slug, result) {
+      const write = identityWriteQueue.catch(() => {}).then(async () => {
+        const stored = await chromeApi.storage.local.get("showIdentityCache");
+        const cache = stored.showIdentityCache && typeof stored.showIdentityCache === "object" ? stored.showIdentityCache : {};
+        for (const [key, entry] of Object.entries(cache)) if (!entry || entry.expiresAt <= clock()) delete cache[key];
+        const fetchedAt = clock();
+        cache[slug] = { schema: 1, slug, ...result, fetchedAt, expiresAt: fetchedAt + (result.status === "matched" ? CACHE_TTL : MISSING_TTL) };
+        const sorted = Object.keys(cache).sort((a, b) => (cache[b]?.fetchedAt || 0) - (cache[a]?.fetchedAt || 0));
+        for (const key of sorted.slice(100)) delete cache[key];
+        await chromeApi.storage.local.set({ showIdentityCache: cache });
+      });
+      identityWriteQueue = write;
+      await write;
+    }
+
+    async function identifyShow(slug, refresh = false) {
+      if (typeof slug !== "string" || slug.length > 200 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return { status: "not-found", reason: "Enter this show's series IMDb ID to identify it." };
+      const state = await readState();
+      const cached = !refresh && identityResult(state.identities[slug], slug);
+      if (cached) return cached;
+      if (identityInflight.has(slug)) return identityInflight.get(slug);
+      const operation = (async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const query = slug.replace(/-/g, " ");
+          const params = new URLSearchParams({ input: JSON.stringify({ query }) });
+          const response = await fetchImpl(`https://api.introdb.app/trpc/metadata.searchMedia?${params}`, {
+            method: "GET", headers: { Accept: "application/json" }, credentials: "omit", referrerPolicy: "no-referrer", signal: controller.signal,
+          });
+          if (response.status !== 200) throw new Error(`IntroDB show search returned HTTP ${response.status}. Try again later.`);
+          const text = await response.text();
+          if (text.length > 128000) throw new Error("IntroDB's show search response was unexpectedly large.");
+          let raw;
+          try { raw = JSON.parse(text); } catch { throw new Error("IntroDB returned invalid show search JSON."); }
+          if (!Array.isArray(raw?.result?.data)) throw new Error("IntroDB returned invalid show search data.");
+          const shows = raw.result.data.filter(item => item?.source === "imdb" && item.mediaType === "tv" &&
+            typeof item.displayTitle === "string" && item.displayTitle.length <= 250 && Core.normalizeImdbId(item.imdbId));
+          // A terminal number can belong to the actual title (Space: 1999).
+          // Only consider a year suffix after trying the complete title first.
+          let matches = shows.filter(item => normalizedTitle(item.displayTitle) === normalizedTitle(query));
+          const suffix = slug.match(/^(.+)-((?:19|20)\d{2})$/);
+          if (!matches.length && suffix) matches = shows.filter(item =>
+            normalizedTitle(item.displayTitle) === normalizedTitle(suffix[1].replace(/-/g, " ")) && item.year === Number(suffix[2]));
+          const candidates = [...new Map(matches.map(item => [Core.normalizeImdbId(item.imdbId), {
+            imdbId: Core.normalizeImdbId(item.imdbId), title: item.displayTitle,
+            year: Number.isInteger(item.year) && item.year >= 1870 && item.year <= 2100 ? item.year : null,
+          }])).values()];
+          const result = candidates.length === 1 ? { status: "matched", imdbId: candidates[0].imdbId } : candidates.length > 1
+            ? { status: "ambiguous", reason: "Several shows share this title. Choose the right series below.", candidates: candidates.slice(0, 25) }
+            : { status: "not-found", reason: "No exact show match was found. Enter this show's series IMDb ID below." };
+          await storeIdentity(slug, result);
+          return result;
+        } catch (error) {
+          return { status: "error", reason: controller.signal.aborted ? "IntroDB show identification timed out. Retrying automatically." :
+            error instanceof TypeError ? "Could not reach IntroDB to identify this show. Check your connection and try again." : error.message };
+        } finally { clearTimeout(timer); }
+      })();
+      identityInflight.set(slug, operation);
+      try { return await operation; } finally { identityInflight.delete(slug); }
     }
 
     function cacheResult(cached, context) {
@@ -176,6 +272,8 @@
       if (!parsed) return null;
       const remembered = contextsByTab.get(tab.id);
       if (remembered && remembered.slug === parsed.slug && remembered.season === parsed.season && remembered.episode === parsed.episode && !parsed.imdbId) parsed.imdbId = remembered.imdbId;
+      const automatic = !parsed.imdbId && identityResult(state.identities[parsed.slug], parsed.slug);
+      if (automatic?.status === "matched") parsed.imdbId = automatic.imdbId;
       return parsed;
     }
 
@@ -185,9 +283,31 @@
 
     async function getContext(tab, refresh = false, attempt = 0) {
       const state = await readState();
-      const context = await contextFor(tab, state);
-      if (!context?.imdbId) return { ok: true, context, timings: null, settings: state.settings, status: "unidentified", playback: playbackByTab.get(tab.id) || null };
-      const result = await fetchTimings(context, refresh);
+      let context = await contextFor(tab, state);
+      let identification;
+      if (context && !context.imdbId) {
+        identification = await identifyShow(context.slug, refresh);
+        const afterLookup = await readState();
+        const currentTab = await chromeApi.tabs.get(tab.id);
+        const current = Core.isCalmUrl(currentTab.url) ? await contextFor(currentTab, afterLookup) : null;
+        if (!current || current.slug !== context.slug || current.season !== context.season || current.episode !== context.episode) {
+          if (attempt < 2 && current) return getContext(currentTab, false, attempt + 1);
+          return { ok: false, retryable: true, error: "The episode changed while its show was identified. Reconnecting now." };
+        }
+        context = current;
+        if (context.imdbId) {
+          if (identification.status !== "matched" || identification.imdbId !== context.imdbId) identification = undefined;
+          const previous = contextsByTab.get(tab.id);
+          contextsByTab.set(tab.id, context);
+          // A popup lookup can repair an earlier identification outage. Wake
+          // already running player controllers once the series becomes known.
+          if (contentEpisodeKey(previous) !== contentEpisodeKey(context)) await notifyTab(tab.id);
+        }
+      }
+      const result = context?.imdbId ? await fetchTimings(context, refresh) : {
+        timings: null, status: identification?.status === "error" ? "error" : "unidentified",
+        ...(identification?.status === "error" ? { error: identification.reason } : {}),
+      };
       const latestState = await readState();
       const currentTab = await chromeApi.tabs.get(tab.id);
       const currentContext = Core.isCalmUrl(currentTab.url) ? await contextFor(currentTab, latestState) : null;
@@ -197,7 +317,9 @@
         if (attempt < 2 && currentContext) return getContext(currentTab, false, attempt + 1);
         return { ok: false, retryable: true, error: "The episode changed while its timings loaded. Reconnecting now." };
       }
-      return { ok: true, context, settings: latestState.settings, playback: playbackByTab.get(tab.id) || null, ...result };
+      return { ok: true, context, settings: latestState.settings, playback: playbackByTab.get(tab.id) || null, ...result,
+        ...(identification ? { identificationStatus: identification.status, identificationReason: identification.reason, identificationCandidates: identification.candidates || [] } : {}),
+      };
     }
 
     function automaticSettingAllows(settings, type) {
@@ -273,8 +395,7 @@
           const imdbId = Core.normalizeImdbId(message.imdbId);
           if (typeof message.slug !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(message.slug) || !imdbId) throw new Error("Enter a valid show IMDb ID, such as tt0455275.");
           if (!currentEpisode || currentEpisode.slug !== message.slug) throw new Error("The show changed. Reopen the extension popup.");
-          const state = await readState();
-          await chromeApi.storage.local.set({ showMappings: { ...state.mappings, [message.slug]: imdbId } });
+          await storeMapping(message.slug, imdbId);
           await notifyAllTabs();
           return { ok: true, imdbId };
         }
@@ -291,11 +412,13 @@
           if (!actual || !requested || JSON.stringify(actual) !== JSON.stringify(requested)) throw new Error("The episode changed. Reload the player context.");
           const state = await readState();
           const context = Core.resolveEpisode(tab.url, state.mappings, message.imdbId);
+          const automatic = !context.imdbId && identityResult(state.identities[context.slug], context.slug);
+          if (automatic?.status === "matched") context.imdbId = automatic.imdbId;
           const previous = contextsByTab.get(tab.id);
           const changed = contentEpisodeKey(previous) !== contentEpisodeKey(context);
           contextsByTab.set(tab.id, context);
           if (!Object.hasOwn(state.mappings, context.slug) && Core.normalizeImdbId(message.imdbId)) {
-            await chromeApi.storage.local.set({ showMappings: { ...state.mappings, [context.slug]: Core.normalizeImdbId(message.imdbId) } });
+            await storeMapping(context.slug, Core.normalizeImdbId(message.imdbId), true);
           }
           // Revoke stale frame context before a slow provider lookup can complete.
           if (changed) await notifyTab(tab.id);

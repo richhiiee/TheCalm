@@ -10,6 +10,11 @@ const { createBackgroundRuntime } = require('../extension/background.js');
 const fixture = require('./fixtures/prison-break-s01e18.json');
 const nextFixture = require('./fixtures/prison-break-s01e19.json');
 const reportedFixture = require('./fixtures/prison-break-s01e21.json');
+const saulFixture = require('./fixtures/better-call-saul-s01e01.json');
+const simpsonsFixture = require('./fixtures/simpsons-s13e03.json');
+const saulSearch = require('./fixtures/introdb-search-better-call-saul.json');
+const simpsonsSearch = require('./fixtures/introdb-search-the-simpsons.json');
+const ghostsSearch = require('./fixtures/introdb-search-ghosts.json');
 
 const EPISODE_URL = 'https://thecalm.site/shows/prison-break/season-1/episode-18';
 const EXTENSION = path.resolve(__dirname, '../extension');
@@ -115,6 +120,12 @@ test('content, popup and background integration with real browser media', { time
   const providerDelays = new Map();
   const providerErrors = new Set();
   const providerRequests = [];
+  const providerRequestDetails = [];
+  const episodePages = new Map();
+  const searchResponses = new Map([
+    ['better call saul', saulSearch], ['the simpsons', simpsonsSearch], ['ghosts', ghostsSearch],
+  ]);
+  const searchRequests = [];
   let embeddedReportDelay = 0;
   let dropEmbeddedReports = false;
   const noopEvent = { addListener() {} };
@@ -193,11 +204,21 @@ test('content, popup and background integration with real browser media', { time
   globalThis.chrome = chromeApi;
   require('../extension/players.js');
   const runtime = createBackgroundRuntime(chromeApi, async url => {
-    const episode = Number(new URL(url).searchParams.get('episode'));
+    const requestUrl = new URL(url);
+    const query = requestUrl.searchParams;
+    if (requestUrl.pathname === '/trpc/metadata.searchMedia') {
+      const search = JSON.parse(query.get('input')).query;
+      searchRequests.push(search);
+      return new Response(JSON.stringify(searchResponses.get(search) || { result: { data: [] } }), { status: 200 });
+    }
+    const episode = Number(query.get('episode'));
+    const imdbId = query.get('imdb_id');
+    const season = Number(query.get('season'));
     providerRequests.push(episode);
+    providerRequestDetails.push({ imdbId, season, episode });
     if (providerDelays.has(episode)) await delay(providerDelays.get(episode));
     if (providerErrors.has(episode)) return new Response('Temporary provider outage', { status: 503 });
-    const data = providerResponses.get(episode);
+    const data = providerResponses.get(`${imdbId}:${season}:${episode}`) || (imdbId === 'tt0455275' ? providerResponses.get(episode) : undefined);
     return data ? new Response(JSON.stringify(data), { status: 200 }) : new Response(JSON.stringify({ error: 'No segments found' }), { status: 404 });
   });
   runtime.install();
@@ -218,14 +239,27 @@ test('content, popup and background integration with real browser media', { time
   }
   try {
     const html = await fs.readFile(path.join(__dirname, 'fixtures/episode.html'), 'utf8');
+    function episodeHtml(slug, title, season, episode, metadata = []) {
+      const scripts = metadata.map(data => `<script type="application/ld+json">${JSON.stringify(data)}</script>`).join('');
+      return html.replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>/, scripts)
+        .replace(/<title>.*?<\/title>/, `<title>${title} — Season ${season}, Episode ${episode}</title>`)
+        .replace(/<h1>.*?<\/h1>/, `<h1>${title} — Season ${season}, Episode ${episode}</h1>`)
+        .replace('src="/fixture-media.wav"', `src="/fixture-media.wav${slug === 'better-call-saul' ? '?saul' : ''}"`)
+        .replace('/shows/prison-break/season-1/episode-19', `/shows/${slug}/season-${season}/episode-${episode + 1}`);
+    }
+    function forgetShow(slug) {
+      if (storage.showMappings) delete storage.showMappings[slug];
+      if (storage.showIdentityCache) delete storage.showIdentityCache[slug];
+    }
     const shared = await fs.readFile(path.join(EXTENSION, 'shared.js'), 'utf8');
     const content = await fs.readFile(path.join(EXTENSION, 'content.js'), 'utf8');
     const media = silence();
     const differentMedia = silence(2700);
     const shortCreditMedia = silence(2600);
+    const saulMedia = silence(3182);
     async function mediaRoute(route) {
       const url = new URL(route.request().url());
-      const body = url.searchParams.has('short-credits') ? shortCreditMedia : url.searchParams.has('different') ? differentMedia : media;
+      const body = url.searchParams.has('saul') ? saulMedia : url.searchParams.has('short-credits') ? shortCreditMedia : url.searchParams.has('different') ? differentMedia : media;
       const match = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
       const start = match ? Number(match[1]) : 0;
       const end = match && match[2] ? Math.min(Number(match[2]), body.length - 1) : body.length - 1;
@@ -241,7 +275,7 @@ test('content, popup and background integration with real browser media', { time
     const homepage = '<!doctype html><html><body><h1>TheCalm home fixture</h1><div id="ticker">0</div>' + '<div class="card"><span>Show</span></div>'.repeat(10000) + '</body></html>';
     await context.route('https://thecalm.site/**', route => {
       const pathname = new URL(route.request().url()).pathname;
-      return pathname === '/fixture-media.wav' ? mediaRoute(route) : route.fulfill({ status: 200, contentType: 'text/html', body: pathname === '/' ? homepage : html });
+      return pathname === '/fixture-media.wav' ? mediaRoute(route) : route.fulfill({ status: 200, contentType: 'text/html', body: episodePages.get(pathname) || (pathname === '/' ? homepage : html) });
     });
     await context.route('https://player.thecalm-fixture.test/**', route => {
       const url = new URL(route.request().url());
@@ -922,6 +956,191 @@ test('content, popup and background integration with real browser media', { time
       await seek(reportedFixture.intro.start_sec + 0.1, true, hidden);
       await delay(500);
       assert.ok(await currentTime(hidden) < reportedFixture.intro.start_sec + 3, 'visibility and frame identity must keep the unselected same-host player untouched');
+    });
+
+    await t.test('Better Call Saul identifies automatically without page metadata and skips its actual intro', async () => {
+      const route = '/shows/better-call-saul/season-1/episode-1';
+      episodePages.set(route, episodeHtml('better-call-saul', 'Better Call Saul', 1, 1));
+      providerResponses.set('tt3032476:1:1', saulFixture);
+      forgetShow('better-call-saul');
+      const searchesBefore = searchRequests.filter(query => query === 'better call saul').length;
+      await page.goto('https://thecalm.site' + route + '?pl=0');
+      await until(async () => (await message('GET_CONTEXT')).context?.imdbId === 'tt3032476', 'automatic Better Call Saul series identification');
+      await until(async () => (await playerStatus()).safety.ok, 'Better Call Saul player and timings');
+      const resolved = await message('GET_CONTEXT');
+      assert.equal(resolved.context.season, 1);
+      assert.equal(resolved.context.episode, 1);
+      assert.equal(resolved.timings.segments.intro.start, 360.5);
+      assert.equal(resolved.timings.segments.intro.end, 375);
+      assert.ok(providerRequestDetails.some(request => request.imdbId === 'tt3032476' && request.season === 1 && request.episode === 1), 'timestamps must be fetched for the series and episode actually being watched');
+      await seek(0.1); await delay(250);
+      assert.ok(await currentTime() < 3, 'an unmarked opening must not invent a recap skip');
+      await seek(269.1); await delay(250);
+      assert.ok(await currentTime() < 272, 'Prison Break intro markers must not affect this show');
+      await seek(360.7);
+      await until(async () => (await currentTime()) >= 375, 'Better Call Saul automatic intro skip');
+      assert.ok(await currentTime() < 378, 'the actual first-episode intro ends at 6:15');
+      assert.equal(searchRequests.filter(query => query === 'better call saul').length, searchesBefore + 1, 'media events and popup requests should reuse one automatic series lookup');
+    });
+
+    await t.test('The Simpsons resolves its series while an episode without timings stays unchanged', async () => {
+      const route = '/shows/the-simpsons/season-13/episode-3';
+      episodePages.set(route, episodeHtml('the-simpsons', 'The Simpsons', 13, 3));
+      providerResponses.set('tt0096697:13:3', simpsonsFixture);
+      forgetShow('the-simpsons');
+      await page.goto('https://thecalm.site' + route + '?pl=1');
+      await until(async () => (await message('GET_CONTEXT')).context?.imdbId === 'tt0096697', 'automatic Simpsons series identification');
+      const resolved = await message('GET_CONTEXT');
+      assert.equal(resolved.status, 'missing', 'missing community timings must be distinguished from an unidentified show');
+      assert.equal(resolved.context.season, 13);
+      assert.equal(resolved.context.episode, 3);
+      assert.equal(resolved.timings.hasData, false);
+      await seek(0.1); await delay(400);
+      assert.ok(await currentTime() < 3, 'an identified episode without ranges must not fabricate a skip');
+      const popup = await context.newPage();
+      try {
+        await popup.goto(POPUP_URL);
+        await until(async () => (await popup.locator('#episode-title').innerText()) === 'The Simpsons', 'Simpsons popup title');
+        assert.match(await popup.locator('#status').innerText(), /no.*timing/i);
+        assert.equal(await popup.locator('#mapping-area').isVisible(), false, 'a known series should not ask for a manual IMDb ID just because timing coverage is missing');
+      } finally { await popup.close(); await page.bringToFront(); }
+    });
+
+    await t.test('ambiguous series matches wait for the chosen show instead of guessing a remake', async () => {
+      const route = '/shows/ghosts/season-1/episode-1';
+      episodePages.set(route, episodeHtml('ghosts', 'Ghosts', 1, 1));
+      forgetShow('ghosts');
+      const requestsBefore = providerRequestDetails.length;
+      await page.goto('https://thecalm.site' + route);
+      await until(async () => (await message('GET_CONTEXT')).identificationStatus === 'ambiguous', 'ambiguous Ghosts series result');
+      const unresolved = await message('GET_CONTEXT');
+      assert.equal(unresolved.status, 'unidentified');
+      assert.equal(unresolved.context.imdbId, null);
+      assert.equal(providerRequestDetails.length, requestsBefore, 'no remake should be sent to the timing provider before the viewer chooses');
+      const popup = await context.newPage();
+      try {
+        await popup.goto(POPUP_URL);
+        await until(() => popup.locator('#show-match').isVisible(), 'series choice for ambiguous search');
+        await popup.locator('#show-match').selectOption('tt11379026');
+        await popup.locator('#use-show-match').click();
+        await until(async () => (await message('GET_CONTEXT')).context?.imdbId === 'tt11379026', 'selected 2021 Ghosts series');
+        assert.equal(storage.showMappings.ghosts, 'tt11379026', 'a deliberate show choice must persist for later episodes');
+      } finally { await popup.close(); await page.bringToFront(); }
+    });
+
+    await t.test('primary graph metadata resolves series references and ignores episode and recommendation IMDb IDs', async () => {
+      const route = '/shows/better-call-saul/season-1/episode-1';
+      const url = 'https://thecalm.site' + route;
+      const metadata = { '@context': 'https://schema.org', '@graph': [
+        { '@type': 'WebPage', '@id': url + '#page', url, mainEntity: { '@id': '#episode' } },
+        { '@type': ['CreativeWork', 'TVEpisode'], '@id': '#episode', url, episodeNumber: 1, sameAs: 'https://www.imdb.com/title/tt9000001/', partOfSeries: { '@id': '#series' } },
+        { '@type': ['CreativeWork', 'TVSeries'], '@id': '#series', name: 'Better Call Saul', url: 'https://thecalm.site/shows/better-call-saul', identifier: [{ '@type': 'PropertyValue', propertyID: 'IMDb', value: 'tt3032476' }] },
+        { '@type': 'ItemList', '@id': '#recommendations', itemListElement: [{ '@id': '#other-series' }] },
+        { '@type': 'TVSeries', '@id': '#other-series', name: 'Prison Break', url: 'https://thecalm.site/shows/prison-break', sameAs: 'https://www.imdb.com/title/tt0455275/' },
+      ] };
+      episodePages.set(route, episodeHtml('better-call-saul', 'Better Call Saul', 1, 1, [metadata]));
+      forgetShow('better-call-saul');
+      const requestsBefore = providerRequestDetails.length;
+      searchResponses.set('better call saul', { result: { data: [] } });
+      try {
+        await page.goto(url);
+        await until(async () => (await message('GET_CONTEXT')).context?.imdbId === 'tt3032476', 'series identity from primary structured metadata');
+        assert.ok(providerRequestDetails.slice(requestsBefore).every(request => request.imdbId === 'tt3032476'), 'only the primary series, never an episode ID or recommendation, may supply timings');
+        await seek(360.7);
+        await until(async () => (await currentTime()) >= 375, 'automatic skip from graph-based series metadata');
+      } finally { searchResponses.set('better call saul', saulSearch); }
+    });
+
+    await t.test('recommendation-only metadata and a standalone episode IMDb ID cannot identify another series', async () => {
+      const examples = [
+        { slug: 'recommendation-example', title: 'Recommendation Example', metadata: { '@context': 'https://schema.org', '@graph': [
+          { '@type': 'WebPage', mainEntity: { '@id': '#recommendations' } },
+          { '@id': '#recommendations', '@type': 'ItemList', itemListElement: [{ '@id': '#prison-break' }] },
+          { '@id': '#prison-break', '@type': 'TVSeries', name: 'Prison Break', url: 'https://thecalm.site/shows/prison-break', sameAs: 'https://www.imdb.com/title/tt0455275/' },
+        ] } },
+        { slug: 'episode-only-example', title: 'Episode Only Example', metadata: { '@context': 'https://schema.org', '@type': 'TVEpisode', name: 'Episode one', sameAs: 'https://www.imdb.com/title/tt9000001/' } },
+      ];
+      for (const example of examples) {
+        const route = `/shows/${example.slug}/season-1/episode-1`;
+        episodePages.set(route, episodeHtml(example.slug, example.title, 1, 1, [example.metadata]));
+        const requestsBefore = providerRequestDetails.length;
+        await page.goto('https://thecalm.site' + route);
+        const unresolved = await message('GET_CONTEXT');
+        assert.equal(unresolved.context.imdbId, null, `${example.title} must not adopt an unrelated or episode-specific IMDb ID`);
+        assert.equal(unresolved.status, 'unidentified');
+        assert.equal(providerRequestDetails.length, requestsBefore, 'unresolved metadata must not trigger a timing lookup for the wrong identity');
+      }
+    });
+
+    await t.test('late primary series metadata recovers an unidentified show without reloading the episode', async () => {
+      const route = '/shows/better-call-saul/season-1/episode-1';
+      episodePages.set(route, episodeHtml('better-call-saul', 'Better Call Saul', 1, 1));
+      forgetShow('better-call-saul');
+      searchResponses.set('better call saul', { result: { data: [] } });
+      try {
+        await page.goto('https://thecalm.site' + route);
+        await until(async () => (await message('GET_CONTEXT')).status === 'unidentified', 'unidentified episode before late metadata');
+        await until(async () => (await playerStatus()).videoFound, 'playing element before late metadata');
+        await page.evaluate(() => {
+          const script = document.createElement('script');
+          script.type = 'application/ld+json';
+          script.textContent = JSON.stringify({ '@context': 'https://schema.org', '@type': 'TVSeries', name: 'Better Call Saul', url: 'https://thecalm.site/shows/better-call-saul', sameAs: 'https://www.imdb.com/title/tt3032476/' });
+          document.head.append(script);
+        });
+        await until(async () => (await message('GET_CONTEXT')).context?.imdbId === 'tt3032476', 'late primary metadata identification');
+        await seek(360.7);
+        await until(async () => (await currentTime()) >= 375, 'automatic skip after late metadata recovery');
+        assert.ok(await currentTime() < 378);
+      } finally { searchResponses.set('better call saul', saulSearch); }
+    });
+
+    await t.test('the popup can correct a saved show identity without discarding an explicit mapping automatically', async () => {
+      const route = '/shows/better-call-saul/season-1/episode-1';
+      episodePages.set(route, episodeHtml('better-call-saul', 'Better Call Saul', 1, 1));
+      forgetShow('better-call-saul');
+      storage.showMappings = { ...storage.showMappings, 'better-call-saul': 'tt0455275' };
+      await page.goto('https://thecalm.site' + route);
+      assert.equal((await message('GET_CONTEXT')).context.imdbId, 'tt0455275', 'a saved viewer choice must not be silently replaced by a title search');
+      const popup = await context.newPage();
+      try {
+        await popup.goto(POPUP_URL);
+        await popup.locator('#change-show').click();
+        await until(() => popup.locator('#mapping-area').isVisible(), 'editable saved show mapping');
+        assert.equal(await popup.locator('#imdb-id').inputValue(), 'tt0455275', 'the existing mapping must be visible before correction');
+        await popup.locator('#imdb-id').fill('tt3032476');
+        await popup.locator('#save-mapping').click();
+        await until(async () => (await message('GET_CONTEXT')).context?.imdbId === 'tt3032476', 'corrected Better Call Saul mapping');
+        assert.equal(storage.showMappings['better-call-saul'], 'tt3032476');
+      } finally { await popup.close(); await page.bringToFront(); }
+      await seek(360.7);
+      await until(async () => (await currentTime()) >= 375, 'automatic intro skip after correcting a saved identity');
+    });
+
+    await t.test('changing shows ignores stale metadata and replaces both identity and media timings', async () => {
+      episodePages.set(new URL(EPISODE_URL).pathname, html.replace('</head>', '<meta name="imdb_id" content="tt0455275"></head>'));
+      await page.goto(EPISODE_URL);
+      await message('IMPORT_TIMINGS', { data: fixture });
+      await until(async () => (await playerStatus()).safety.ok, 'Prison Break before changing shows');
+      forgetShow('better-call-saul');
+      await page.evaluate(async () => {
+        history.pushState({}, '', '/shows/better-call-saul/season-1/episode-1?pl=0');
+        for (const script of document.querySelectorAll('script[type="application/ld+json"]')) script.remove();
+        document.title = 'Better Call Saul — Season 1, Episode 1';
+        document.querySelector('h1').textContent = document.title;
+        const video = document.querySelector('video');
+        video.pause();
+        const metadata = new Promise(resolve => video.addEventListener('loadedmetadata', resolve, { once: true }));
+        video.src = '/fixture-media.wav?saul'; video.load();
+        await metadata;
+      });
+      await until(async () => (await message('GET_CONTEXT')).context?.imdbId === 'tt3032476', 'new show identity after SPA transition');
+      assert.equal(await page.locator('meta[name="imdb_id"]').getAttribute('content'), 'tt0455275', 'the old unscoped IMDb meta node must remain in the DOM during this transition');
+      await until(async () => (await playerStatus()).safety.ok, 'new show source and timings');
+      await seek(269.1); await delay(300);
+      assert.ok(await currentTime() < 272, 'the old show\'s intro must not skip story after changing series');
+      await seek(360.7);
+      await until(async () => (await currentTime()) >= 375, 'new show intro after SPA transition');
+      assert.ok(await currentTime() < 378);
     });
 
     assert.deepEqual(errors, [], 'real browser pages should not report script errors');

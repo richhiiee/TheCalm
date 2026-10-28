@@ -32,6 +32,75 @@ test("does not guess a show identity and honors an explicit saved mapping", () =
   assert.equal(Core.normalizeImdbId("other text tt0455275"), null);
 });
 
+test("identifies a series through WebPage mainEntity and array-valued schema types", () => {
+  const url = "https://thecalm.site/shows/better-call-saul/season-1/episode-1";
+  const data = { "@type": "WebPage", url, mainEntity: {
+    "@type": ["CreativeWork", "https://schema.org/TVEpisode"], sameAs: "https://www.imdb.com/title/tt3973198/",
+    partOfSeries: { "@type": ["CreativeWork", "TVSeries"], name: "Better Call Saul", sameAs: "https://www.imdb.com/title/tt3032476/" },
+  } };
+  assert.equal(Core.extractPrimaryImdb([data], url), "tt3032476");
+});
+
+test("resolves JSON-LD graph references and season-to-series IMDb identifiers", () => {
+  const url = "https://thecalm.site/shows/better-call-saul/season-1/episode-1";
+  const data = { "@graph": [
+    { "@id": "#page", "@type": "WebPage", mainEntity: { "@id": "#episode" } },
+    { "@id": "#episode", "@type": "TVEpisode", identifier: "tt3973198", partOfSeason: { "@id": "#season" } },
+    { "@id": "#season", "@type": "TVSeason", partOfSeries: { "@id": "#series" } },
+    { "@id": "#series", "@type": "TVSeries", name: "Better Call Saul", identifier: [
+      { "@type": "PropertyValue", propertyID: "TMDB", value: "60059" },
+      { "@type": "PropertyValue", propertyID: "IMDb", value: "tt3032476" },
+    ] },
+    { "@type": "ItemList", itemListElement: [{ "@type": "TVSeries", sameAs: "https://imdb.com/title/tt0903747/" }] },
+  ] };
+  assert.equal(Core.extractPrimaryImdb([data], url), "tt3032476");
+});
+
+test("an explicit partOfSeries relationship can identify an untyped series reference", () => {
+  const url = "https://thecalm.site/shows/the-simpsons/season-13/episode-3";
+  assert.equal(Core.extractPrimaryImdb([{ "@type": "TVEpisode", partOfSeries: { name: "The Simpsons", "@id": "https://www.imdb.com/title/tt0096697/" } }], url), "tt0096697");
+  assert.equal(Core.extractPrimaryImdb([{ "@type": "TVEpisode", partOfSeries: "https://www.imdb.com/title/tt0096697/" }], url), "tt0096697");
+});
+
+test("never treats an episode's own IMDb ID as the series ID", () => {
+  const url = "https://thecalm.site/shows/better-call-saul/season-1/episode-1";
+  assert.equal(Core.extractPrimaryImdb([{ "@type": "TVEpisode", sameAs: "https://imdb.com/title/tt3973198/" }], url), null);
+  assert.equal(Core.extractPrimaryImdb([{ "@type": "TVEpisode", partOfSeason: { "@type": "TVSeason", identifier: "tt3973198" } }], url), null);
+  assert.equal(Core.extractPrimaryImdb([{ "@type": "TVEpisode", sameAs: "https://imdb.com/title/tt3973198/" }], url, ["tt3973198"]), null);
+});
+
+test("ignores recommendation-only IMDb IDs and rejects conflicting primary metadata", () => {
+  const url = "https://thecalm.site/shows/better-call-saul/season-1/episode-1";
+  const recommendation = { "@type": "ItemList", itemListElement: [{ "@id": "#recommended", "@type": "TVSeries", sameAs: "https://imdb.com/title/tt0903747/" }] };
+  const primary = { "@type": "TVSeries", name: "Better Call Saul", sameAs: "https://imdb.com/title/tt3032476/" };
+  assert.equal(Core.extractPrimaryImdb([recommendation], url), null);
+  assert.equal(Core.extractPrimaryImdb([primary, recommendation], url), "tt3032476");
+  assert.equal(Core.extractPrimaryImdb([primary], url, ["tt0903747"]), null);
+  assert.equal(Core.extractPrimaryImdb([{ ...primary, sameAs: [primary.sameAs, "https://imdb.com/title/tt0903747/"] }], url), null);
+});
+
+test("stale metadata for another show does not identify a new SPA show route", () => {
+  const url = "https://thecalm.site/shows/the-simpsons/season-13/episode-3";
+  assert.equal(Core.extractPrimaryImdb([{ "@type": "TVSeries", name: "Prison Break", sameAs: "https://imdb.com/title/tt0455275/" }], url), null);
+  assert.equal(Core.extractPrimaryImdb([{ "@type": "TVSeries", name: "Prison Break", sameAs: "https://imdb.com/title/tt0455275/" }], url, ["tt0455275"]), null);
+  assert.equal(Core.extractPrimaryImdb([{ "@type": "TVSeries", url: "https://thecalm.site/shows/prison-break", sameAs: "https://imdb.com/title/tt0455275/" }], url), null);
+  assert.equal(Core.extractPrimaryImdb([], url, ["https://www.imdb.com/title/tt0096697/"]), "tt0096697");
+});
+
+test("handles year-qualified series slugs and cyclic graph references conservatively", () => {
+  const url = "https://thecalm.site/shows/the-office-2005/season-1/episode-1";
+  assert.equal(Core.extractPrimaryImdb([{ "@type": "TVSeries", name: "The Office", identifier: { propertyID: "IMDb", value: "tt0386676" } }], url), "tt0386676");
+  assert.equal(Core.extractPrimaryImdb([{ "@type": "TVSeries", name: "The Office", datePublished: "2001-07-09", identifier: "tt0290978" }], url, ["tt0290978"]), null);
+  assert.equal(Core.extractPrimaryImdb([{ "@type": "TVSeries", name: "The Office", startDate: "2005-03-24", identifier: "tt0386676" }], url), "tt0386676");
+  const data = { "@graph": [
+    { "@type": "WebPage", url, mainEntity: { "@id": "#episode" } },
+    { "@id": "#episode", "@type": "TVEpisode", partOfSeason: { "@id": "#season" } },
+    { "@id": "#season", "@type": "TVSeason", partOfSeason: { "@id": "#episode" } },
+  ] };
+  assert.equal(Core.extractPrimaryImdb([data], url), null);
+  assert.equal(Core.extractPrimaryImdb([data], "https://unrelated.example/shows/the-office-2005/season-1/episode-1"), null);
+});
+
 test("preserves recap zero, cold open, and exact intro/credit boundaries", () => {
   const timings = Core.validateTimings(raw(), context);
   const settings = { enabled: true, skipIntro: true, skipRecap: true, autoNext: true };

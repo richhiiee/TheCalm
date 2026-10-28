@@ -59,11 +59,18 @@
       <div class="action-row">
         <button id="refresh" class="button" type="button" disabled>Refresh timings</button>
         <button id="undo" class="button" type="button" disabled>Undo last skip</button>
+        <button id="change-show" class="button" type="button" disabled aria-controls="mapping-area" aria-expanded="false">Change show</button>
       </div>
 
       <section id="mapping-area" class="setup-card" aria-labelledby="mapping-heading" hidden>
         <h2 id="mapping-heading">Identify this show</h2>
-        <p class="muted">This page doesn’t provide a show ID. Enter its IMDb series ID once; episode numbers are detected automatically.</p>
+        <div id="show-matches" hidden>
+          <p class="muted">Several series share this title. Choose the one you’re watching.</p>
+          <label class="field-label" for="show-match">Series</label>
+          <select id="show-match"></select>
+          <button id="use-show-match" class="button" type="button" disabled>Use this show</button>
+        </div>
+        <p class="muted">You can also enter the show’s IMDb series ID once. Episode numbers are detected automatically.</p>
         <form id="mapping-form">
           <label class="field-label" for="imdb-id">IMDb series ID</label>
           <div class="input-row"><input id="imdb-id" name="imdb-id" type="text" placeholder="tt0455275" pattern="tt[0-9]{7,10}" autocomplete="off" spellcheck="false" required><button id="save-mapping" class="button" type="submit">Save</button></div>

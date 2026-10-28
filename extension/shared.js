@@ -41,6 +41,124 @@
     } catch { return null; }
   }
 
+  function extractPrimaryImdb(documents, pageUrl, metaValues = []) {
+    const episode = parseEpisodeUrl(pageUrl);
+    if (!episode) return null;
+    const types = node => (Array.isArray(node?.["@type"]) ? node["@type"] : [node?.["@type"]])
+      .filter(value => typeof value === "string").map(value => value.split(/[\/#:]/).pop());
+    const isType = (node, type) => types(node).includes(type);
+    const reference = value => {
+      try { return typeof value === "string" ? new URL(value, pageUrl).href : null; } catch { return null; }
+    };
+    const index = new Map();
+    const nodes = [];
+    const visited = new WeakSet();
+    const collect = (value, depth = 0) => {
+      if (!value || typeof value !== "object" || visited.has(value) || depth > 16 || nodes.length >= 512) return;
+      visited.add(value);
+      if (Array.isArray(value)) { for (const item of value) collect(item, depth + 1); return; }
+      nodes.push(value);
+      const id = reference(value["@id"]);
+      if (id && Object.keys(value).length > 1) index.set(id, value);
+      for (const child of Object.values(value)) collect(child, depth + 1);
+    };
+    for (const source of documents || []) collect(source);
+    const expand = value => {
+      if (typeof value === "string") return index.get(reference(value)) || null;
+      if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+      const definition = index.get(reference(value["@id"]));
+      return definition && definition !== value ? { ...definition, ...value } : value;
+    };
+    const matchingUrl = value => {
+      try {
+        const url = new URL(typeof value === "object" ? value?.["@id"] : value, pageUrl);
+        if (!isCalmUrl(url.href)) return false;
+        const media = parseEpisodeUrl(url.href);
+        return media ? media.slug === episode.slug && media.season === episode.season && media.episode === episode.episode
+          : url.pathname.replace(/\/$/, "").toLowerCase() === `/shows/${episode.slug}`;
+      } catch { return false; }
+    };
+    const pointsHere = node => [node.url, node.mainEntityOfPage].some(value => value && matchingUrl(value)) ||
+      (typeof node["@id"] === "string" && (isType(node, "WebPage") || !node["@id"].startsWith("#")) && matchingUrl(node["@id"]));
+    const directIds = node => {
+      const ids = new Set();
+      const read = value => {
+        if (Array.isArray(value)) { value.forEach(read); return; }
+        if (value && typeof value === "object") {
+          const property = value.propertyID || value.name;
+          if (property && !/imdb/i.test(String(property))) return;
+          read(value.value); read(value["@id"]); return;
+        }
+        const id = normalizeImdbId(value); if (id) ids.add(id);
+      };
+      for (const value of [node.imdb_id, node.imdbId, node.url, node["@id"], node.identifier, node.sameAs]) read(value);
+      return ids;
+    };
+    const titleKey = value => typeof value === "string" ? value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]/g, "") : "";
+    const expectedTitles = [episode.slug, episode.slug.replace(/-(?:19|20)\d{2}$/, "")].map(titleKey);
+    const yearHint = Number(episode.slug.match(/-((?:19|20)\d{2})$/)?.[1]) || null;
+    const seriesMatches = node => {
+      if (typeof node.name === "string" && !expectedTitles.includes(titleKey(node.name))) return false;
+      if ([node.url, node["@id"]].some(value => {
+        if (typeof value !== "string" || !value) return false;
+        try { const url = new URL(value, pageUrl); return isCalmUrl(url.href) && !matchingUrl(value); } catch { return false; }
+      })) return false;
+      const years = [node.startDate, node.datePublished, node.year].map(value => {
+        const match = String(value ?? "").match(/^((?:19|20)\d{2})(?:$|[-T])/);
+        return match ? Number(match[1]) : null;
+      }).filter(Boolean);
+      return !yearHint || years.every(year => year === yearHint);
+    };
+    const seriesIds = (value, ancestors = new Set(), depth = 0, asSeries = false) => {
+      if (depth > 12) return new Set();
+      if (Array.isArray(value)) {
+        const ids = new Set();
+        for (const item of value) for (const id of seriesIds(item, ancestors, depth + 1, asSeries)) ids.add(id);
+        return ids;
+      }
+      if (asSeries && normalizeImdbId(value)) return new Set([normalizeImdbId(value)]);
+      const node = expand(value);
+      if (!node || typeof node !== "object") return new Set();
+      const identity = reference(node["@id"]) || node;
+      if (ancestors.has(identity)) return new Set();
+      const next = new Set(ancestors); next.add(identity);
+      if (isType(node, "TVSeries") || (asSeries && !types(node).length)) {
+        // Stale SPA metadata for another show must not identify the new URL.
+        if (!seriesMatches(node)) return new Set();
+        return directIds(node);
+      }
+      if (isType(node, "TVEpisode") || isType(node, "TVSeason")) {
+        // An episode's own IMDb ID is not an IMDb series ID.
+        return node.partOfSeries ? seriesIds(node.partOfSeries, next, depth + 1, true) : seriesIds(node.partOfSeason, next, depth + 1);
+      }
+      if (isType(node, "WebPage")) return seriesIds(node.mainEntity, next, depth + 1);
+      return new Set();
+    };
+    const mediaNodes = nodes.filter(node => isType(node, "TVSeries") || isType(node, "TVEpisode"));
+    let primary = nodes.filter(node => isType(node, "WebPage") && node.mainEntity && pointsHere(node));
+    if (!primary.length) primary = mediaNodes.filter(pointsHere);
+    if (!primary.length) {
+      const roots = (documents || []).flatMap(source => Array.isArray(source) ? source : [source]);
+      const hasOtherPage = node => [node?.url, node?.["@id"]].some(value => {
+        if (typeof value !== "string" || !value) return false;
+        try { const url = new URL(value, pageUrl); return isCalmUrl(url.href) && !matchingUrl(value); } catch { return false; }
+      });
+      const rootMedia = roots.filter(node => !hasOtherPage(node) && (isType(node, "TVSeries") || isType(node, "TVEpisode") || (isType(node, "WebPage") && node.mainEntity)));
+      if (rootMedia.length === 1) primary = rootMedia;
+      else if (!rootMedia.length) {
+        const graphMedia = roots.flatMap(node => Array.isArray(node?.["@graph"]) ? node["@graph"] : [])
+          .filter(node => !hasOtherPage(node) && (isType(node, "TVSeries") || isType(node, "TVEpisode")));
+        if (graphMedia.length === 1) primary = graphMedia;
+      }
+    }
+    const ids = new Set();
+    for (const node of primary) for (const id of seriesIds(node)) ids.add(id);
+    const incompatible = new Set(nodes.filter(node => isType(node, "TVEpisode") || (isType(node, "TVSeries") && !seriesMatches(node)))
+      .flatMap(node => [...directIds(node)]));
+    for (const value of metaValues) { const id = normalizeImdbId(value); if (id && !incompatible.has(id)) ids.add(id); }
+    return ids.size === 1 ? [...ids][0] : null;
+  }
+
   function resolveEpisode(value, mappings = {}, primaryImdbId = null) {
     const episode = parseEpisodeUrl(value);
     if (!episode) return null;
@@ -144,5 +262,5 @@
     return settings;
   }
 
-  return Object.freeze({ DEFAULT_SETTINGS, MIN_CONFIDENCE, DURATION_TOLERANCE, BUILTIN_MAPPINGS, SEGMENT_TYPES, isCalmUrl, parseEpisodeUrl, normalizeImdbId, resolveEpisode, episodeKey, validateTimings, assessTimings, segmentAt, formatTime, sanitizeSettings });
+  return Object.freeze({ DEFAULT_SETTINGS, MIN_CONFIDENCE, DURATION_TOLERANCE, BUILTIN_MAPPINGS, SEGMENT_TYPES, isCalmUrl, parseEpisodeUrl, normalizeImdbId, extractPrimaryImdb, resolveEpisode, episodeKey, validateTimings, assessTimings, segmentAt, formatTime, sanitizeSettings });
 });

@@ -1,0 +1,216 @@
+{
+  "result": {
+    "data": [
+      {
+        "source": "imdb",
+        "displayTitle": "Ghosts",
+        "year": 2021,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/8yBQYa6AdvMY5H9CiAv0HkvF3UE.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt11379026",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghost",
+        "year": 1990,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/w9RaPHov8oM5cnzeE27isnFMsvS.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt0099653",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghosts",
+        "year": 2019,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/3Xz4JtqISyVCKct96O94k4Mz5sU.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt8594324",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghost",
+        "year": 2023,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/a5lfrmeIwacElFYKgCBFM80u0z8.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt27125266",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghost Whisperer",
+        "year": 2005,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/9ZtGupUFaHhws7mOcwhNTtRpRHC.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt0460644",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghost in the Shell",
+        "year": 2017,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/zCtL3UBgCoZzd7XTVGhvl6XY75E.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt1219827",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghosts",
+        "year": 2025,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/okiqzoGfBiBSsz1nqGDlwUGGWUT.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt32536158",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "The Ghost",
+        "year": 2022,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/AulIkX8l9u17lcQfEubU8n0cnwk.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt15309632",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghosts of Beirut",
+        "year": 2023,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/w40j5uqjJIUvRSP5zJ7Q5qRdNRs.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt21100682",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghosts of Girlfriends Past",
+        "year": 2009,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/azzg0lv5vpQRoOrZfNVkJn04f1M.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt0821640",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghost",
+        "year": 2012,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/tJZPUbxuUPpbaZpNsGlGqbwz5id.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt2398172",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghost Rider",
+        "year": 2007,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/4quwR1VwZouD0YF9AaD72kQAjxH.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt0259324",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghosts",
+        "year": 2025,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/rPOD7tRasLmeItHEDWxaUAsMyQQ.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt32767912",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "The Ghost Writer",
+        "year": 2010,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/rK7m2Ba0ieXa37NaAmrx4dfRvvM.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt1139328",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghosts: Australia",
+        "year": 2025,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/2LQNn3kRU9xkgLbD6IfeQKkX4K7.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt33400507",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghost Rider: Spirit of Vengeance",
+        "year": 2011,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/xEoBT6lYfQNpSpTm8gJMTrQytiw.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt1071875",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghosts of Shepherdstown",
+        "year": 2016,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/bg6G2fUiufyut1H3FN7f80jBJCh.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt5763648",
+        "mediaType": "tv"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "A Ghost Story",
+        "year": 2017,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/rp5JPIyZi9sMob15l46zNQLe5cO.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt6265828",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghosts of Mars",
+        "year": 2001,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/i2zztssCIbahGES1fdfWFmDXian.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt0228333",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghosts",
+        "year": 2020,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/y4UepD2cYI7uPm9vVGUurxxRmO0.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt12140804",
+        "mediaType": "movie"
+      },
+      {
+        "source": "imdb",
+        "displayTitle": "Ghost in the Shell",
+        "year": 1995,
+        "posterUrl": "https://image.tmdb.org/t/p/w342/9gC88zYUBARRSThcG93MvW14sqx.jpg",
+        "tvdbId": null,
+        "tmdbId": null,
+        "imdbId": "tt0113568",
+        "mediaType": "movie"
+      }
+    ]
+  }
+}

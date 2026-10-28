@@ -16,6 +16,7 @@
     denial: null, forceReport: false, lastBlockReason: "",
     contextRetryTimer: null, contextRetryAttempt: 0, contextFailed: false,
     frameReconnectTimer: null, frameReconnectForce: false, frameReconnectSignature: null, frameEvents: new Map(),
+    metadataEvents: new Map(), metadataTimer: null, metadataCandidate: "", metadataOwners: new WeakMap(),
   };
 
   async function message(type, fields = {}) {
@@ -24,27 +25,40 @@
   }
 
   function extractImdb() {
-    // Only primary structured metadata is trusted; recommendation links are deliberately ignored.
-    const find = (node) => {
-      if (!node || typeof node !== "object") return null;
-      if (Array.isArray(node)) {
-        const media = node.filter(item => /^(TVSeries|TVEpisode|Movie)$/.test(String(item?.["@type"])));
-        return media.length === 1 ? find(media[0]) : null;
+    const episode = Core.parseEpisodeUrl(location.href);
+    if (!episode) return null;
+    const belongsHere = element => {
+      const signature = element.localName === "script" ? element.textContent : element.content;
+      const previous = state.metadataOwners.get(element);
+      if (!previous || previous.signature !== signature) {
+        state.metadataOwners.set(element, { slug: episode.slug, signature }); return true;
       }
-      if (node["@graph"]) return find(node["@graph"]);
-      if (node.partOfSeries) return find(node.partOfSeries);
-      if (!/^(TVSeries|TVEpisode|Movie)$/.test(String(node["@type"]))) return null;
-      const values = [node.imdb_id, node.imdbId, node.url, node.identifier?.value, node.identifier, ...(Array.isArray(node.sameAs) ? node.sameAs : [node.sameAs])];
-      return values.map(value => Core.normalizeImdbId(value)).find(Boolean) || null;
+      return previous.slug === episode.slug;
     };
-    const found = new Set();
+    const documents = [];
     for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
-      try { const id = find(JSON.parse(script.textContent)); if (id) found.add(id); } catch { /* Malformed page metadata is ignored. */ }
+      try { if (belongsHere(script)) documents.push(JSON.parse(script.textContent)); } catch { /* Malformed page metadata is ignored. */ }
     }
-    for (const meta of document.querySelectorAll('meta[property="imdb:id"],meta[name="imdb_id"]')) {
-      const id = Core.normalizeImdbId(meta.content); if (id) found.add(id);
-    }
-    return found.size === 1 ? [...found][0] : null;
+    const values = [...document.querySelectorAll('meta[property="imdb:id"],meta[name="imdb_id"]')].filter(belongsHere).map(meta => meta.content);
+    return Core.extractPrimaryImdb(documents, location.href, values);
+  }
+
+  function watchMetadata(element) {
+    if (!isTop || state.metadataEvents.has(element) || !element.matches('script[type="application/ld+json"],meta[property="imdb:id"],meta[name="imdb_id"]')) return;
+    const refresh = () => {
+      if (state.metadataTimer) return;
+      state.metadataTimer = setTimeout(() => {
+        state.metadataTimer = null;
+        const episode = Core.parseEpisodeUrl(location.href);
+        const imdbId = episode && extractImdb();
+        const key = episode && `${episode.slug}:${episode.season}:${episode.episode}:${imdbId}`;
+        if (!imdbId || imdbId === state.response?.context?.imdbId || key === state.metadataCandidate) return;
+        state.metadataCandidate = key; refreshContext(true);
+      }, 100);
+    };
+    const observer = new MutationObserver(refresh);
+    observer.observe(element, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["content", "type"] });
+    state.metadataEvents.set(element, observer); refresh();
   }
 
   function episodeIdentity(response = state.response) {
@@ -63,16 +77,17 @@
     clearTimeout(state.uiTimer); clearTimeout(state.retryTimer);
     clearTimeout(state.contextRetryTimer); state.contextRetryTimer = null;
     state.contextRetryAttempt = 0; state.contextFailed = false;
+    state.metadataCandidate = "";
     state.players.clear();
   }
 
-  function retryContext() {
+  function retryContext(select = false) {
     if (state.contextRetryTimer || state.contextRetryAttempt >= 5 || (isTop && !Core.parseEpisodeUrl(location.href))) return;
     const epoch = state.epoch;
     const delay = Math.min(60000, 3000 * 2 ** state.contextRetryAttempt++);
     state.contextRetryTimer = setTimeout(() => {
       state.contextRetryTimer = null;
-      if (epoch === state.epoch && state.contextFailed) refreshContext();
+      if (epoch === state.epoch && state.contextFailed) refreshContext(select);
     }, delay);
   }
 
@@ -86,7 +101,11 @@
       .filter(({ binding }) => binding?.pendingContext && !binding.awaitingMetadata);
     const response = await message(select && isTop ? "SET_EPISODE" : "GET_CONTEXT", select && isTop ? { url: location.href, imdbId: extractImdb() } : {});
     if (epoch !== state.epoch || sequence !== state.refreshSequence) return;
-    if (!response?.ok) { state.contextFailed = true; state.lastBlockReason = response?.error || "Waiting to reconnect episode timings."; retryContext(); return; }
+    if (!response?.ok) {
+      state.contextFailed = true; state.lastBlockReason = response?.error || "Waiting to reconnect episode timings.";
+      if (select) { state.metadataCandidate = ""; clearTimeout(state.contextRetryTimer); state.contextRetryTimer = null; }
+      retryContext(select); return;
+    }
     if (isTop) {
       const current = Core.parseEpisodeUrl(location.href);
       const context = response.context;
@@ -187,6 +206,7 @@
       if (element.id === "thecalm-skip-overlay") return;
       if (element.localName === "video" && !state.videoEvents.has(element)) { watchVideo(element); changed = true; }
       if (element.localName === "iframe") watchFrame(element);
+      if (element.localName === "script" || element.localName === "meta") watchMetadata(element);
       if (element.shadowRoot && !state.observers.some(item => item.root === element.shadowRoot)) {
         observeRoot(element.shadowRoot);
         changed = visitAdded(element.shadowRoot) || changed;
@@ -208,6 +228,9 @@
           if (node.nodeType !== 1) continue;
           for (const [frame, record] of state.frameEvents) {
             if (!frame.isConnected) { record.abort.abort(); record.observer.disconnect(); state.frameEvents.delete(frame); }
+          }
+          for (const [element, observer] of state.metadataEvents) {
+            if (!element.isConnected) { observer.disconnect(); state.metadataEvents.delete(element); }
           }
           for (const video of [...state.videos]) {
             if (node === video || node.contains(video) || !video.isConnected) {
@@ -239,6 +262,8 @@
     for (const record of state.frameEvents.values()) { record.abort.abort(); record.observer.disconnect(); }
     state.frameEvents.clear(); clearTimeout(state.frameReconnectTimer); state.frameReconnectTimer = null;
     state.frameReconnectForce = false; state.frameReconnectSignature = null;
+    for (const observer of state.metadataEvents.values()) observer.disconnect();
+    state.metadataEvents.clear(); clearTimeout(state.metadataTimer); state.metadataTimer = null;
     state.observers = []; state.videoEvents.clear(); state.videos = []; state.video = null;
     state.discoveryActive = false; state.selectionDirty = true;
     clearTimeout(state.uiTimer); clearTimeout(state.retryTimer);
