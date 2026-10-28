@@ -20,7 +20,7 @@
 
   async function message(type, fields = {}) {
     try { return await chrome.runtime.sendMessage({ type, ...fields }); }
-    catch { return { ok: false, error: "Reload this page to reconnect TheCalm Skip." }; }
+    catch { return { ok: false, error: "Reload this page to reconnect CalmSkip." }; }
   }
 
   function extractImdb() {
@@ -622,7 +622,7 @@
     const shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = `:host{position:fixed;z-index:2147483646;pointer-events:none;font:14px/1.45 system-ui,sans-serif;color:#eef8f7}*{box-sizing:border-box}section{max-width:min(380px,88vw);padding:12px 14px;border:1px solid #59827c;border-radius:12px;background:#122522f2;box-shadow:0 8px 30px #0006;pointer-events:auto}section[hidden]{display:none!important}section[data-kind="undo"],section[data-kind="toast"]{display:flex;align-items:center;gap:14px;padding:8px 12px}section[data-kind="undo"] p,section[data-kind="toast"] p{margin:0}section[data-kind="undo"] button{padding:4px 10px}p{margin:0 0 8px}button{font:inherit;color:#0a2421;background:#92e4cf;border:0;border-radius:7px;padding:7px 13px;cursor:pointer}button:focus-visible{outline:3px solid white;outline-offset:3px}button+button{margin-left:8px;background:transparent;color:#effbf8;border:1px solid #82a69e}.note{font-size:12px;color:#b7ccc6}`;
-    const panel = document.createElement("section"); panel.setAttribute("aria-label", "TheCalm Skip"); panel.hidden = true;
+    const panel = document.createElement("section"); panel.setAttribute("aria-label", "CalmSkip"); panel.hidden = true;
     const text = document.createElement("p"); text.setAttribute("role", "status");
     const actions = document.createElement("div"); panel.append(text, actions); shadow.append(style, panel);
     (document.body || document.documentElement).append(host);

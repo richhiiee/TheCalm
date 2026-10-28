@@ -46,9 +46,9 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 Review that change and answer the normal PowerShell prompt, then rerun the sync command. `RemoteSigned` allows locally created Git checkout scripts and retains the signature requirement for scripts marked as Internet downloads. Do not override an organization-managed policy or use `Bypass` to run this updater.
 
-After a changed sync, open `brave://extensions` and click **Reload** on the existing **TheCalm Skip** extension. Reopen TheCalm. The popup version should match the source manifest and **Automatic skipping** should be on unless you deliberately paused it.
+After a changed sync, open `brave://extensions` and click **Reload** on the existing **CalmSkip** extension. Reopen TheCalm. The popup version should match the source manifest and **Automatic skipping** should be on unless you deliberately paused it.
 
-Only one enabled copy of TheCalm Skip should remain. Files are updated automatically by the following watch mode, but Brave's **Reload** step remains manual during development.
+Only one enabled copy of CalmSkip should remain. Files are updated automatically by the following watch mode, but Brave's **Reload** step remains manual during development.
 
 ## 3. Receive cloud development updates
 
@@ -98,3 +98,18 @@ State is kept alongside those backups in `thecalm-skip-dev-sync\state.json`. Unk
 The updater validates and stages the source before writing, refuses symbolic links/junctions in managed paths, and refuses a destination belonging to another extension. If copying fails, it attempts to restore every changed file. A filesystem or permission problem can also block a restore; in that case it continues restoring the others and reports the failed files and backup directory for manual recovery. Do not edit the state file or use the installed folder as the development source. Make code edits in `$HOME\source\TheCalm` instead.
 
 The current cloud session cannot access your Windows drive. The first clone and updater command must run on your Windows computer. Afterward, GitHub provides the transfer path for cloud changes; no repeated ZIP download or manual file replacement is needed.
+
+## Upgrading the name to CalmSkip
+
+Version 0.1.5 changes the extension’s display name from **TheCalm Skip** to **CalmSkip**. The updated sync script recognizes exactly those two names, preserving the existing installation folder, settings, and backup state. The older running watcher has the original name check in memory, so restart it once:
+
+1. Stop the current watcher with **Ctrl+C**.
+2. Pull before starting the script again:
+
+```powershell
+Set-Location "$HOME\source\TheCalm"
+git pull --ff-only
+& .\scripts\sync-dev.ps1 -Pull -Watch -InstallDirectory 'C:\Users\richh\Downloads\thecalm-skip'
+```
+
+After the updater reports **Updated CalmSkip 0.1.5**, close TheCalm/player tabs, reload the existing extension in `brave://extensions`, and reopen the episode. The browser should display the new name and mint icon. A refusal from the old watcher does not replace the installed files; pulling and restarting loads the compatible validator.

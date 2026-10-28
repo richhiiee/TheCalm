@@ -167,6 +167,49 @@ test('updates back up replaced managed files and preserve unknown installed file
   assert.equal(state.managed_files.some(file => file.path === 'my-notes.txt'), false, 'unknown files must not become managed');
 });
 
+test('CalmSkip upgrades a legacy named installation and state without losing its backup history', async t => {
+  const h = await fixture(t);
+  sync(h);
+  const statePath = path.join(stateDirectory(h), 'state.json');
+  const legacyState = JSON.parse((await fs.readFile(statePath, 'utf8')).replace(/^\uFEFF/, ''));
+  legacyState.name = 'TheCalm Skip';
+  await fs.writeFile(statePath, JSON.stringify(legacyState));
+  await fs.writeFile(path.join(h.install, 'my-notes.txt'), 'keep this installed note\n');
+
+  const manifestPath = path.join(h.extension, 'manifest.json');
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  manifest.name = 'CalmSkip';
+  manifest.version = '0.1.5';
+  await fs.writeFile(manifestPath, JSON.stringify(manifest));
+  assert.match(sync(h), /Updated CalmSkip 0\.1\.5/);
+  assert.equal(JSON.parse(await fs.readFile(path.join(h.install, 'manifest.json'), 'utf8')).name, 'CalmSkip');
+  assert.equal(await fs.readFile(path.join(h.install, 'my-notes.txt'), 'utf8'), 'keep this installed note\n');
+  const backups = (await backupContents(h, 'manifest.json')).map(text => JSON.parse(text));
+  assert.equal(backups.length, 1);
+  assert.equal(backups[0].name, 'TheCalm Skip', 'the previous manifest must remain recoverable');
+  const state = JSON.parse((await fs.readFile(statePath, 'utf8')).replace(/^\uFEFF/, ''));
+  assert.equal(state.name, 'CalmSkip');
+  assert.equal(state.version, '0.1.5');
+  assert.equal(state.managed_files.some(file => file.path === 'my-notes.txt'), false);
+  const beforeUnchangedSync = await snapshot(stateDirectory(h));
+  assert.match(sync(h), /already up to date/i);
+  assert.deepEqual(await snapshot(stateDirectory(h)), beforeUnchangedSync, 'a migrated installation remains idempotent');
+});
+
+test('unrelated source names are rejected before changing a known installation', async t => {
+  const h = await fixture(t);
+  sync(h);
+  const installed = await snapshot(h.install);
+  const state = await snapshot(stateDirectory(h));
+  const manifestPath = path.join(h.extension, 'manifest.json');
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  manifest.name = 'Another extension';
+  await fs.writeFile(manifestPath, JSON.stringify(manifest));
+  assert.match(sync(h, [], 1), /Expected a Manifest V3 'CalmSkip' extension/);
+  assert.deepEqual(await snapshot(h.install), installed);
+  assert.deepEqual(await snapshot(stateDirectory(h)), state);
+});
+
 test('retired unchanged resources are backed up while modified retired resources remain', async t => {
   const h = await fixture(t);
   await fs.writeFile(path.join(h.extension, 'retired.js'), '// retired original\n');

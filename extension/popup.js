@@ -216,7 +216,7 @@
   });
 
   async function initialize() {
-    $("build-version").textContent = `TheCalm Skip v${chrome.runtime.getManifest?.().version || "0.1.4"}.`;
+    $("build-version").textContent = `CalmSkip v${chrome.runtime.getManifest?.().version || "0.1.5"}.`;
     setBusy(true);
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -225,7 +225,7 @@
       try { url = new URL(tab?.url); } catch { /* Browser-internal pages are unsupported. */ }
       view.onSite = Boolean(url && /^https?:$/.test(url.protocol) && ["thecalm.site", "www.thecalm.site"].includes(url.hostname));
       if (!view.onSite || !Number.isInteger(view.tabId)) {
-        $("status").textContent = "Open an episode on thecalm.site, then open TheCalm Skip.";
+        $("status").textContent = "Open an episode on thecalm.site, then open CalmSkip.";
         $("player-title").textContent = "Waiting for an episode";
         $("player-detail").textContent = "The extension only operates on TheCalm episode pages and connected player frames.";
         return;

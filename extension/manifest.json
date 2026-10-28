@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "TheCalm Skip",
-  "version": "0.1.4",
-  "description": "Skip intros and recaps on TheCalm using IntroDB community timestamps.",
+  "name": "CalmSkip",
+  "version": "0.1.5",
+  "description": "Automatically skip intros and recaps on TheCalm, then move to the next episode at credits using IntroDB timestamps.",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "activeTab", "scripting", "webNavigation"],
+  "permissions": ["storage", "scripting", "webNavigation"],
   "host_permissions": [
     "https://thecalm.site/*",
     "https://www.thecalm.site/*",
@@ -12,7 +12,12 @@
   ],
   "optional_host_permissions": ["https://*/*"],
   "background": { "service_worker": "background.js" },
-  "action": { "default_popup": "popup.html", "default_title": "TheCalm Skip" },
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "CalmSkip",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }
+  },
   "content_scripts": [{
     "matches": ["https://thecalm.site/*", "https://www.thecalm.site/*"],
     "js": ["shared.js", "content.js"],

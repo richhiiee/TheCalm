@@ -24,7 +24,7 @@ h2 { font-size: 19px; line-height: 1.35; letter-spacing: -.35px; overflow-wrap: 
 .brand-row { gap: 8px; justify-content: space-between; margin-bottom: 21px; }
 .brand { gap: 9px; }
 .brand-mark { flex: 0 0 35px; width: 35px; height: 35px; border: 1px solid #3b6d68; border-radius: 10px; color: var(--teal); background: #173c3a; }
-.brand-mark svg { width: 100%; height: 100%; }
+.brand-mark img { display: block; width: 100%; height: 100%; }
 .brand-caption { font-size: 10px; color: var(--muted); margin-top: 3px; }
 .pill { flex-shrink: 0; font-size: 10px; font-weight: 600; color: #c8d4de; border: 1px solid #3a4a58; border-radius: 20px; padding: 5px 8px; }
 .pill.active { border-color: #346c64; color: var(--teal); background: #193a36; }
@@ -93,5 +93,6 @@ textarea { min-height: 72px; resize: vertical; font: 10px/1.5 ui-monospace, SFMo
 .feedback:empty { display: none; }
 .feedback.error { color: #ffc8aa; }
 footer { margin-top: 17px; color: #7f96a6; font-size: 9px; line-height: 1.6; text-align: center; }
+footer a { color: var(--teal); text-underline-offset: 2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }

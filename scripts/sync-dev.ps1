@@ -20,7 +20,8 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
-$ExpectedName = 'TheCalm Skip'
+$ExpectedName = 'CalmSkip'
+$CompatibleNames = @($ExpectedName, 'TheCalm Skip')
 $StateSchema = 1
 
 function Get-FullDirectory([string] $Path) {
@@ -114,7 +115,7 @@ function Get-ValidatedManifest([string] $Root) {
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "No manifest.json in $Root" }
     try { $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json }
     catch { throw 'The extension manifest is not valid JSON.' }
-    if ($manifest.manifest_version -ne 3 -or $manifest.name -ne $ExpectedName -or
+    if ($manifest.manifest_version -ne 3 -or -not ($CompatibleNames -contains $manifest.name) -or
         [string] $manifest.version -notmatch '^\d{1,5}(\.\d{1,5}){0,3}$') {
         throw "Expected a Manifest V3 '$ExpectedName' extension with a valid version."
     }
@@ -251,7 +252,7 @@ function Read-SyncState {
     Assert-NoReparsePath $StateFile
     try { $saved = Get-Content -LiteralPath $StateFile -Raw -Encoding UTF8 | ConvertFrom-Json }
     catch { throw "Cannot read development state. Preserve and inspect $StateFile before retrying." }
-    if ($saved.schema -ne $StateSchema -or $saved.name -ne $ExpectedName -or $saved.install_directory -ne $InstallDirectory) {
+    if ($saved.schema -ne $StateSchema -or -not ($CompatibleNames -contains $saved.name) -or $saved.install_directory -ne $InstallDirectory) {
         throw "The development state belongs to another installation: $StateFile"
     }
     return $saved
@@ -267,10 +268,10 @@ function Invoke-Sync {
         if (Test-Path -LiteralPath $targetManifest -PathType Leaf) {
             try { $installed = Get-Content -LiteralPath $targetManifest -Raw -Encoding UTF8 | ConvertFrom-Json }
             catch { throw 'The installed manifest is invalid. Back up and inspect that folder before syncing.' }
-            if ($installed.name -ne $ExpectedName -or $installed.manifest_version -ne 3) { throw 'Refusing to overwrite a different installed extension.' }
+            if (-not ($CompatibleNames -contains $installed.name) -or $installed.manifest_version -ne 3) { throw 'Refusing to overwrite a different installed extension.' }
         }
         elseif (@(Get-ChildItem -LiteralPath $InstallDirectory -Force).Count -gt 0) {
-            throw 'The installation folder has files but no TheCalm Skip manifest. Choose an empty folder or the existing extension installation.'
+            throw 'The installation folder has files but no CalmSkip manifest. Choose an empty folder or the existing extension installation.'
         }
     }
     $saved = Read-SyncState
@@ -361,9 +362,9 @@ function Invoke-Sync {
         if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
     }
     if ($changes.Count -gt 0 -or $removals.Count -gt 0) {
-        Write-Host ("Updated TheCalm Skip {0}: {1} changed, {2} retired file(s)." -f $manifest.version, $changes.Count, $removals.Count)
+        Write-Host ("Updated {0} {1}: {2} changed, {3} retired file(s)." -f $manifest.name, $manifest.version, $changes.Count, $removals.Count)
         if ($backedUp.Count -gt 0) { Write-Host "Previous managed files: $backup" }
-        Write-Host 'Reload TheCalm Skip in brave://extensions, then reopen your TheCalm/player tabs.'
+        Write-Host "Reload $($manifest.name) in brave://extensions, then reopen your TheCalm/player tabs."
         return $true
     }
     return $false

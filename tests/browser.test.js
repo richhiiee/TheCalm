@@ -253,9 +253,9 @@ test('content, popup and background integration with real browser media', { time
     });
     await context.route('https://ads.thecalm-fixture.test/**', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><body>Unrelated ad frame</body></html>' }));
     await context.route('https://extension.thecalm-fixture.test/**', async route => {
-      const filename = path.basename(new URL(route.request().url()).pathname);
-      if (!['popup.html', 'popup.css', 'popup.js', 'shared.js'].includes(filename)) return route.abort();
-      await route.fulfill({ contentType: filename.endsWith('.html') ? 'text/html' : filename.endsWith('.css') ? 'text/css' : 'application/javascript', body: await fs.readFile(path.join(EXTENSION, filename)) });
+      const filename = new URL(route.request().url()).pathname.replace(/^\/+/, '');
+      if (!['popup.html', 'popup.css', 'popup.js', 'shared.js', ...[16, 32, 48, 128].map(size => `icons/icon-${size}.png`)].includes(filename)) return route.abort();
+      await route.fulfill({ contentType: filename.endsWith('.png') ? 'image/png' : filename.endsWith('.html') ? 'text/html' : filename.endsWith('.css') ? 'text/css' : 'application/javascript', body: await fs.readFile(path.join(EXTENSION, filename)) });
     });
     await context.exposeBinding('__calmBridge', async (source, request) => {
       if (request.type === '__TEST_DOCUMENT_COMPLETE') {

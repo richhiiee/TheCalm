@@ -1,24 +1,28 @@
-# TheCalm Skip
+# CalmSkip
 
-A personal Brave extension that uses [IntroDB](https://introdb.app) community timestamps to skip recaps and intros on **thecalm.site**, and move to the next episode at the credits. It runs in your browser and needs no Netflix account, API key, or backend server.
+A Brave-compatible browser extension that uses [IntroDB](https://introdb.app) community timestamps to skip recaps and intros on **thecalm.site**, and move to the next episode at the credits. It runs in your browser and needs no Netflix account, API key, or backend server.
 
 For development updates without manually replacing ZIPs, see [Windows development setup](docs/DEVELOPMENT_WINDOWS.md). It syncs a local checkout of the `development` branch into the existing Brave installation, with backups. The browser still needs a **Reload** click after extension files change. Registration and later store publishing are covered in [Chrome Web Store setup](docs/CHROME_WEB_STORE.md); a store account is not needed for unpacked development.
+
+The public store release is prepared as **CalmSkip v0.1.5**, with original icons, demonstration screenshots of the real interface, [listing copy](docs/store/LISTING.md), a [privacy policy](docs/store/PRIVACY.md), and [submission fields](docs/store/SUBMISSION.md). See [the publishing guide](docs/CHROME_WEB_STORE.md#publish-calmskip-015) to package it on Windows and submit it in Google’s dashboard. This repository does not establish store approval or publication.
 
 ## Install in Brave
 
 1. Download and extract `dist/thecalm-skip.zip`, or use this checkout's `extension` directory directly.
 2. Open `brave://extensions`, enable **Developer mode**, and choose **Load unpacked**.
 3. Select the extracted directory containing `manifest.json`. In this checkout, select `extension`.
-4. Reload your TheCalm episode, start playback, and open **TheCalm Skip** from the browser's extensions menu.
+4. Reload your TheCalm episode, start playback, and open **CalmSkip** from the browser's extensions menu.
 5. Automatic skipping is already on. Supported intros and recaps skip during playback, followed by a brief **Skipped intro** or **Skipped recap** toast.
 
 The confirmation toast disappears after three seconds. Its **Undo** button restores your previous position; **Undo last skip** in the extension popup remains available after the toast disappears. To use manual skip buttons instead, turn off **Automatic skipping**. That preference is saved for future episodes.
 
 ### Updating an installed version
 
-With the [Windows development watcher](docs/DEVELOPMENT_WINDOWS.md) running, wait for its update message, click **Reload** for TheCalm Skip in `brave://extensions`, then reopen the TheCalm episode. For a ZIP installation, replace the installed extension files before reloading. The popup footer should show **TheCalm Skip v0.1.4** and the header should show **Auto enabled**. The old 0.1.0 review-mode default is upgraded to automatic mode once; any later decision to pause automatic skipping is preserved. Existing player permissions, show mappings, and cached timings are retained when reloading the same extension folder. The user's local installation target is `C:\Users\richh\Downloads\thecalm-skip`; this cloud workspace cannot directly access that Windows drive.
+Version 0.1.5 renames **TheCalm Skip** to **CalmSkip**. For an existing watcher, stop it with **Ctrl+C**, run `git pull --ff-only` in the source checkout, and restart the watch command so its updated name checks are loaded. The installed folder stays `C:\Users\richh\Downloads\thecalm-skip`, with its settings and backups preserved. See [the one-time rename instructions](docs/DEVELOPMENT_WINDOWS.md#upgrading-the-name-to-calmskip).
 
-For the 0.1.2 performance fix, close existing TheCalm/player tabs before updating, then reopen them afterward so the old polling scripts are fully unloaded. Keep only one enabled copy of TheCalm Skip. Reload the existing extension folder instead of loading another extracted copy as a second extension.
+With the [Windows development watcher](docs/DEVELOPMENT_WINDOWS.md) running, wait for its update message, click **Reload** for CalmSkip in `brave://extensions`, then reopen the TheCalm episode. For a ZIP installation, replace the installed extension files before reloading. The popup footer should show **CalmSkip v0.1.5** and the header should show **Auto enabled**. The old 0.1.0 review-mode default is upgraded to automatic mode once; any later decision to pause automatic skipping is preserved. Existing player permissions, show mappings, and cached timings are retained when reloading the same extension folder. The user's local installation target is `C:\Users\richh\Downloads\thecalm-skip`; this cloud workspace cannot directly access that Windows drive.
+
+For the 0.1.2 performance fix, close existing TheCalm/player tabs before updating, then reopen them afterward so the old polling scripts are fully unloaded. Keep only one enabled copy of CalmSkip. Reload the existing extension folder instead of loading another extracted copy as a second extension.
 
 For a player hosted inside another website's iframe, choose its host under the player controls and press **Connect player**. Brave asks for access to that specific host. Access is optional; the extension does not automatically request access to every site. Reloading or changing episodes reconnects previously granted hosts within TheCalm tabs. A new or nested player host may require another connection.
 
@@ -93,6 +97,6 @@ The cloud browser's managed policy blocks loading unpacked extensions, so browse
 
 ## Privacy and permissions
 
-The required hosts are `thecalm.site`, `www.thecalm.site`, and `api.introdb.app`. Optional HTTPS host permission is requested only when you connect a player from the popup. `storage` keeps settings, show mappings, and up to 100 timing records locally. Temporary session storage retains frame IDs, the top document ID, and hashes of verified iframe source URLs across worker suspension; it does not retain raw iframe URLs or query tokens. Following a full-page episode chooser uses a short-lived tab session entry containing the originating episode coordinates and numeric player selection; it expires after 15 seconds and clears when consumed. `activeTab`, `scripting`, and `webNavigation` locate and connect the player inside the current TheCalm tab.
+The required hosts are `thecalm.site`, `www.thecalm.site`, and `api.introdb.app`. Optional HTTPS host permission is requested only when you connect a player from the popup. `storage` keeps settings, show mappings, and up to 100 timing records locally. Temporary session storage retains frame IDs, the top document ID, and hashes of verified iframe source URLs across worker suspension; it does not retain raw iframe URLs or query tokens. Following a full-page episode chooser uses a short-lived tab session entry containing the originating episode coordinates and numeric player selection; it expires after 15 seconds and clears when consumed. `scripting` and `webNavigation` locate and connect the player inside the current TheCalm tab.
 
 Only the IMDb show ID, season, and episode are sent to IntroDB. The extension does not export your Netflix login, browser cookies, video/audio, or local playback history. Local settings and cached data can be removed by uninstalling the extension.

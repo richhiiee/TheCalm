@@ -19,7 +19,7 @@ When you can access the developer dashboard with a verified contact email, the a
 The unpacked extension remains the development version:
 
 - The local sync script copies extension source files into your existing installed folder, preserving backups.
-- After a change, click **Reload** for TheCalm Skip in `brave://extensions`, then reopen the episode. An unpacked extension does not automatically reload when its files change.
+- After a change, click **Reload** for CalmSkip in `brave://extensions`, then reopen the episode. An unpacked extension does not automatically reload when its files change.
 - The store account is not used by the sync script. Development updates do not require a store review.
 
 A later store release is a separate workflow:
@@ -40,6 +40,37 @@ Choose visibility based on who should be able to install:
 All visibility options still undergo Google's review. Do not expect an unlisted or private submission to appear immediately.
 
 Brave supports installing Chrome Web Store extensions through the listing's **Add to Brave** button. Once the store version is installed, disable the unpacked development copy when using the store version so two copies do not operate on the same player.
+
+## Publish CalmSkip 0.1.5
+
+The prepared release is **public and searchable**. It includes the original mint/teal skip icon and the actual extension interface in clearly labeled demonstration screenshots. These assets do not claim that the demonstration video is a playable episode from TheCalm.
+
+Stop an existing watcher with **Ctrl+C** before pulling, because the rename also updates its compatibility checks. Then create the upload ZIP using Windows PowerShell; Node.js and Python are unnecessary for this step:
+
+```powershell
+Set-Location "$HOME\source\TheCalm"
+git pull --ff-only
+Compress-Archive -Path .\extension\* -DestinationPath "$HOME\Downloads\CalmSkip-0.1.5.zip" -Force
+```
+
+The ZIP must contain `manifest.json` at its root, alongside the extension scripts and `icons` folder. Upload **CalmSkip-0.1.5.zip** from Downloads using **Add new item** in the developer dashboard.
+
+Complete the listing with these files from the checkout:
+
+| Dashboard field | File or value |
+| --- | --- |
+| Name and descriptions | [store/LISTING.md](store/LISTING.md) |
+| Store icon | `docs/store/assets/icon-128.png` |
+| Screenshots, 1280×800 | `docs/store/assets/screenshot-01-automatic-skip.png` and `screenshot-02-next-episode.png` |
+| Privacy policy URL | `https://github.com/richhiiee/TheCalm/blob/development/docs/store/PRIVACY.md` |
+| Single purpose, permission reasons, data disclosures, review steps | [store/SUBMISSION.md](store/SUBMISSION.md) |
+| Visibility | **Public** |
+
+TheCalm’s playable pages require a signed-in session. Enter working reviewer access instructions privately in Google’s **Test instructions** field before submitting. The extension itself has no account; this release has not created or verified a separate TheCalm review account.
+
+After the actual dashboard fields, assets, account verification, and reviewer access are complete, use **Submit for review**. Google decides approval and publication timing. The cloud tools cannot operate your signed-in developer dashboard, so creating this release package does not upload or submit the item.
+
+To resume local development afterward, use the watch command in [the Windows development guide](DEVELOPMENT_WINDOWS.md#upgrading-the-name-to-calmskip). Keep one enabled extension copy when testing the store build.
 
 ## Official references
 
