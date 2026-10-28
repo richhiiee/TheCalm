@@ -68,6 +68,55 @@ test("new installs enable automatic skipping and initialize the settings schema"
   assert.equal(h.data.settingsSchemaVersion, SETTINGS_SCHEMA_VERSION);
 });
 
+test("a slow context lookup follows the current episode instead of returning stale timings", async () => {
+  let release;
+  const requested = [];
+  const h = setup(async url => {
+    const episode = Number(new URL(url).searchParams.get("episode"));
+    requested.push(episode);
+    if (episode === 18) await new Promise(resolve => { release = resolve; });
+    return new Response(JSON.stringify({ ...raw(), episode, recap: { start_sec: 0, end_sec: episode === 19 ? 60 : 52, confidence: 1 } }));
+  });
+  const pending = h.runtime.dispatch({ type: "GET_CONTEXT" }, h.frame);
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  h.tabs.set(7, { id: 7, url: EPISODE_URL.replace("episode-18", "episode-19") });
+  release();
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(result.context.episode, 19);
+  assert.equal(result.timings.episode, 19);
+  assert.equal(result.timings.segments.recap.end, 60);
+  assert.deepEqual(requested, [18, 19]);
+});
+
+test("context lookups discard delayed data after leaving the episode and bound repeated transitions", async () => {
+  let release;
+  const left = setup(async () => {
+    await new Promise(resolve => { release = resolve; });
+    return new Response(JSON.stringify(raw()));
+  });
+  const pending = left.runtime.dispatch({ type: "GET_CONTEXT" }, left.frame);
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  left.tabs.set(7, { id: 7, url: "https://thecalm.site/shows/prison-break" });
+  release();
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.retryable, true);
+  assert.equal(result.timings, undefined);
+
+  let calls = 0;
+  const changing = setup(async url => {
+    calls++;
+    const episode = Number(new URL(url).searchParams.get("episode"));
+    changing.tabs.set(7, { id: 7, url: EPISODE_URL.replace("episode-18", `episode-${episode + 1}`) });
+    return new Response(JSON.stringify({ ...raw(), episode }));
+  });
+  const unstable = await changing.runtime.dispatch({ type: "GET_CONTEXT" }, changing.frame);
+  assert.equal(unstable.ok, false);
+  assert.equal(unstable.retryable, true);
+  assert.equal(calls, 3, "an unstable route must not keep the worker in an unbounded lookup loop");
+});
+
 test("old review mode upgrades once while later explicit pause survives worker restarts", async () => {
   const h = setup(async () => new Response(JSON.stringify(raw())), { initialData: {
     settings: { enabled: false, skipIntro: false, skipRecap: true, autoNext: false },
@@ -415,4 +464,19 @@ test("only the main page may request fresh child-player status", async () => {
   assert.equal((await h.runtime.dispatch({ ...command, tabId: 7 }, h.popup)).ok, false);
   assert.equal((await h.runtime.dispatch({ ...command, command: "__proto__" }, h.top)).ok, false);
   assert.equal(h.sent.length, 1, "untrusted callers must not relay commands to another frame");
+});
+
+test("only the current main episode page can request an event-driven player reconnect", async () => {
+  const connected = [];
+  const h = setup(async () => { throw new Error("player reconnect must not fetch timings"); }, { players: {
+    trackTab() {}, async reconnectTab(tabId) { connected.push(tabId); },
+  } });
+  const request = { type: "PLAYER_FRAMES_CHANGED" };
+  assert.equal((await h.runtime.dispatch(request, h.top)).ok, true);
+  assert.deepEqual(connected, [7]);
+  assert.equal((await h.runtime.dispatch(request, h.frame)).ok, false);
+  assert.equal((await h.runtime.dispatch({ ...request, tabId: 7 }, h.popup)).ok, false);
+  h.tabs.set(7, { id: 7, url: "https://thecalm.site/shows/prison-break" });
+  assert.equal((await h.runtime.dispatch(request, h.top)).ok, false);
+  assert.deepEqual(connected, [7]);
 });

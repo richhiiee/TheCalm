@@ -129,18 +129,23 @@
 
   async function loadPlayer() {
     if (!view.onSite) return renderPlayer(null);
-    const [statusResult, originsResult] = await Promise.allSettled([
-      chrome.tabs.sendMessage(view.tabId, { type: "GET_PLAYER_STATUS" }, { frameId: 0 }),
-      request("PLAYER_ORIGINS"),
-    ]);
+    // Discovery repairs an already granted player before its fresh status is read.
+    let originsResult;
+    try { originsResult = await request("PLAYER_ORIGINS"); } catch { /* The page can still report a local player. */ }
     let player = null;
-    if (statusResult.status === "fulfilled") {
-      player = statusResult.value?.player || statusResult.value || null;
+    const retryDelays = [100, 200, 400];
+    for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+      try {
+        const result = await chrome.tabs.sendMessage(view.tabId, { type: "GET_PLAYER_STATUS" }, { frameId: 0 });
+        player = result?.player || result || null;
+      } catch { /* A new document may still be connecting. */ }
+      if (player?.videoFound || !originsResult?.connectedFrames || attempt === retryDelays.length) break;
+      await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
     }
     // Only the popup may enumerate nested player frames. Keep the page's
     // direct-frame fallback if privileged discovery fails during navigation.
-    if (originsResult.status === "fulfilled" && Array.isArray(originsResult.value.playerOrigins)) {
-      player = { ...(player || {}), playerOrigins: originsResult.value.playerOrigins };
+    if (Array.isArray(originsResult?.playerOrigins)) {
+      player = { ...(player || {}), playerOrigins: originsResult.playerOrigins };
     }
     renderPlayer(player);
   }
@@ -211,7 +216,7 @@
   });
 
   async function initialize() {
-    $("build-version").textContent = `TheCalm Skip v${chrome.runtime.getManifest?.().version || "0.1.3"}.`;
+    $("build-version").textContent = `TheCalm Skip v${chrome.runtime.getManifest?.().version || "0.1.4"}.`;
     setBusy(true);
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

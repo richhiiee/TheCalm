@@ -1,0 +1,38 @@
+{
+  "imdb_id": "tt0455275",
+  "media_type": "tv",
+  "is_movie": false,
+  "season": 1,
+  "episode": 19,
+  "intro": {
+    "start_sec": 283,
+    "end_sec": 315,
+    "start_ms": 283000,
+    "end_ms": 315000,
+    "confidence": 1,
+    "submission_count": 1,
+    "updated_at": "2026-04-17T15:32:17.854Z"
+  },
+  "recap": {
+    "start_sec": 0,
+    "end_sec": 60,
+    "start_ms": 0,
+    "end_ms": 60000,
+    "confidence": 1,
+    "submission_count": 1,
+    "updated_at": "2026-04-15T19:14:56.930Z"
+  },
+  "outro": {
+    "start_sec": 2581,
+    "end_sec": 2657,
+    "start_ms": 2581000,
+    "end_ms": 2657000,
+    "confidence": 1,
+    "submission_count": 1,
+    "updated_at": "2026-04-16T06:40:43.223Z"
+  },
+  "post_credits": null,
+  "no_intro": false,
+  "no_recap": false,
+  "no_outro": false
+}

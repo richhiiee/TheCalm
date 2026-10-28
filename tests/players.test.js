@@ -22,7 +22,8 @@ function harness() {
       { frameId: 0, parentFrameId: -1, url: TOP_URL },
       { frameId: 11, parentFrameId: 0, url: EMBED_URL, documentId: "player-document-a" },
     ],
-    calls: { tabs: 0, frames: 0, candidates: 0, injections: [], permissions: 0 },
+    calls: { tabs: 0, frames: 0, candidates: 0, injections: [], probes: [], permissions: 0 },
+    probePaths: {},
     granted: true,
   };
   const event = () => {
@@ -60,7 +61,7 @@ function harness() {
       },
       onRemoved: event(),
     },
-    permissions: { async contains() { state.calls.permissions++; return state.granted; } },
+    permissions: { async contains(request) { state.calls.permissions++; return state.allowedOrigins ? request.origins.every(origin => state.allowedOrigins.has(origin)) : state.granted; } },
     webNavigation: {
       async getAllFrames({ tabId }) {
         state.calls.frames++; assert.equal(tabId, 1);
@@ -80,8 +81,15 @@ function harness() {
       onBeforeNavigate: event(),
     },
     scripting: { async executeScript(details) {
+      if (details.func) {
+        state.calls.probes.push(structuredClone(details.target));
+        const records = details.target.frameIds.map(id => ({ frameId: id, documentId: state.frames.find(frame => frame.frameId === id)?.documentId, result: state.probePaths[id] || null }));
+        if (state.probeHook) state.probeHook();
+        return records;
+      }
       state.calls.injections.push(structuredClone(details));
       if (state.injectPending) await state.injectPending;
+      if (state.injectFailures > 0) { state.injectFailures--; throw new Error("Player is still loading"); }
     } },
   };
 
@@ -268,4 +276,91 @@ test("interactive discovery refreshes after an older empty scan still in flight"
   const result = await refresh;
   assert.equal(result.playerOrigins[0]?.origin, "https://player.example");
   assert.equal(h.state.calls.frames, 2);
+});
+
+test("a permitted redirected player is verified by its actual DOM index and reconnects on popup discovery", async () => {
+  const h = harness();
+  h.state.candidates[0].frameIndex = 0;
+  h.state.frames[1].url = HISTORY_URL;
+  h.state.probePaths[11] = [0];
+  const players = h.worker();
+  const response = await players.handleMessage({ type: "PLAYER_ORIGINS", tabId: 1 });
+  assert.equal(response.connectedFrames, 1);
+  assert.equal(response.playerOrigins[0].origin, "https://player.example");
+  assert.equal(await players.isVisibleFrame(1, 11), true);
+  assert.equal(h.state.calls.probes.length, 1);
+  assert.equal(h.state.calls.injections.length, 1, "a popup lookup repairs a missed automatic injection");
+  assert.equal(JSON.stringify(h.session).includes(EMBED_URL), false);
+});
+
+test("redirect probes distinguish a visible player from its hidden same-origin sibling", async () => {
+  const h = harness();
+  h.state.frames[1].url = "https://player.example/hidden-final";
+  h.state.frames.push({ frameId: 13, parentFrameId: 0, url: HISTORY_URL, documentId: "visible-redirect-document" });
+  h.state.candidates = [{ url: "https://player.example/hidden-start", frameIndex: 0, visible: false }, { url: EMBED_URL, frameIndex: 1, visible: true }];
+  h.state.probePaths = { 11: [0], 13: [1] };
+  const players = h.worker();
+  const response = await players.handleMessage({ type: "PLAYER_ORIGINS", tabId: 1 });
+  assert.equal(response.connectedFrames, 1);
+  assert.equal(await players.isVisibleFrame(1, 11), false);
+  assert.equal(await players.isVisibleFrame(1, 13), true);
+  assert.deepEqual(h.state.calls.injections[0].target.frameIds, [13]);
+});
+
+test("an allowed nested player proves its visible redirected wrapper without granting the wrapper", async () => {
+  const h = harness();
+  h.state.candidates = [{ url: "https://wrapper.example/start", frameIndex: 0, visible: true }];
+  h.state.frames[1].url = "https://wrapper.example/final";
+  h.state.frames.push({ frameId: 12, parentFrameId: 11, url: "https://player.example/nested", documentId: "nested-allowed-document" });
+  h.state.allowedOrigins = new Set(["https://player.example/*"]);
+  h.state.probePaths[12] = [0, 0];
+  const players = h.worker();
+  const response = await players.handleMessage({ type: "PLAYER_ORIGINS", tabId: 1 });
+  assert.equal(response.connectedFrames, 1);
+  assert.equal(await players.isVisibleFrame(1, 12), true);
+  assert.deepEqual(h.state.calls.probes[0].frameIds, [12]);
+  assert.deepEqual(h.state.calls.injections[0].target.frameIds, [12]);
+  assert.equal(response.playerOrigins.find(item => item.origin === "https://wrapper.example").granted, false);
+});
+
+test("redirect probes reject reloads and iframe reorderings that invalidate their snapshot", async () => {
+  for (const change of ["top-document", "player-document", "frame-order", "source", "hidden"]) {
+    const h = harness();
+    h.state.candidates[0].frameIndex = 0;
+    h.state.frames[1].url = HISTORY_URL;
+    h.state.probePaths[11] = [0];
+    h.state.probeHook = () => {
+      if (change === "top-document") h.state.documentId = "new-top-document";
+      if (change === "player-document") h.state.frames[1].documentId = "new-player-document";
+      if (change === "frame-order") h.state.candidates[0].frameIndex = 1;
+      if (change === "source") h.state.candidates[0].url = "https://player.example/other-source";
+      if (change === "hidden") h.state.candidates[0].visible = false;
+    };
+    const response = await h.worker().handleMessage({ type: "PLAYER_ORIGINS", tabId: 1 });
+    assert.equal(response.connectedFrames, 0, change);
+    assert.equal(h.state.calls.injections.length, 0, change);
+  }
+});
+
+test("redirect probing requires an existing host grant", async () => {
+  const h = harness();
+  h.state.candidates[0].frameIndex = 0;
+  h.state.frames[1].url = HISTORY_URL;
+  h.state.probePaths[11] = [0];
+  h.state.granted = false;
+  const response = await h.worker().handleMessage({ type: "PLAYER_ORIGINS", tabId: 1 });
+  assert.equal(response.connectedFrames, 0);
+  assert.equal(h.state.calls.probes.length, 0);
+  assert.equal(h.state.calls.injections.length, 0);
+});
+
+test("opening the popup retries an earlier failed injection in an already tracked episode", async () => {
+  const h = harness();
+  h.state.injectFailures = 1;
+  const players = h.worker();
+  players.trackTab({ id: 1, url: TOP_URL });
+  await until(() => h.state.calls.injections.length === 1);
+  const response = await players.handleMessage({ type: "PLAYER_ORIGINS", tabId: 1 });
+  assert.equal(response.connectedFrames, 1);
+  assert.equal(h.state.calls.injections.length, 2);
 });

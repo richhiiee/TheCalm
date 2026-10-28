@@ -8,6 +8,8 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { chromium } = require('playwright');
 const { createBackgroundRuntime } = require('../extension/background.js');
 const fixture = require('./fixtures/prison-break-s01e18.json');
+const nextFixture = require('./fixtures/prison-break-s01e19.json');
+const reportedFixture = require('./fixtures/prison-break-s01e21.json');
 
 const EPISODE_URL = 'https://thecalm.site/shows/prison-break/season-1/episode-18';
 const EXTENSION = path.resolve(__dirname, '../extension');
@@ -92,7 +94,7 @@ const runtimeShim = `
 // real browser media, and the real background dispatcher in Node. Only Chrome
 // transport/storage/host-grant APIs and provider HTTP responses are simulated.
 // It does not establish that the packaged extension was installed in Chromium.
-test('content, popup and background integration with real browser media', { timeout: 120000 }, async t => {
+test('content, popup and background integration with real browser media', { timeout: 180000 }, async t => {
   const browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
     headless: true,
@@ -101,11 +103,18 @@ test('content, popup and background integration with real browser media', { time
   const context = await browser.newContext();
   let page;
   const frames = new Map();
+  const frameDocuments = new WeakMap();
   let nextFrameId = 1;
+  let nextDocumentId = 1;
   const storage = {};
   const sessionStorage = {};
   const permissions = new Set();
   const tabUpdated = [];
+  const navigationCompleted = [];
+  const providerResponses = new Map();
+  const providerDelays = new Map();
+  const providerErrors = new Set();
+  const providerRequests = [];
   let embeddedReportDelay = 0;
   let dropEmbeddedReports = false;
   const noopEvent = { addListener() {} };
@@ -113,6 +122,10 @@ test('content, popup and background integration with real browser media', { time
     if (frame === page.mainFrame()) return 0;
     if (!frames.has(frame)) frames.set(frame, nextFrameId++);
     return frames.get(frame);
+  }
+  function documentId(frame) {
+    if (!frameDocuments.has(frame)) frameDocuments.set(frame, `fixture-document-${nextDocumentId++}`);
+    return frameDocuments.get(frame);
   }
   function getFrame(id = 0) {
     return id === 0 ? page.mainFrame() : [...frames].find(([, value]) => value === id)?.[0];
@@ -159,23 +172,34 @@ test('content, popup and background integration with real browser media', { time
     permissions: { async contains(request) { return request.origins.every(origin => permissions.has(origin)); } },
     webNavigation: {
       async getAllFrames() {
-        return page.frames().map(frame => ({ frameId: frameId(frame), parentFrameId: frame.parentFrame() ? frameId(frame.parentFrame()) : -1, url: frame.url() }));
+        return page.frames().map(frame => ({ frameId: frameId(frame), documentId: documentId(frame), parentFrameId: frame.parentFrame() ? frameId(frame.parentFrame()) : -1, url: frame.url() }));
       },
-      onCompleted: noopEvent
+      onCompleted: { addListener(listener) { navigationCompleted.push(listener); } }
     },
     scripting: {
-      async executeScript({ target, files }) {
+      async executeScript({ target, files, func, args = [] }) {
+        const results = [];
         for (const id of target.frameIds) {
           const frame = getFrame(id);
           assert.ok(frame, 'injected frame must exist');
-          for (const file of files) await frame.addScriptTag({ path: path.join(EXTENSION, file) });
+          for (const file of files || []) await frame.addScriptTag({ path: path.join(EXTENSION, file) });
+          const result = func ? await frame.evaluate(`(${func.toString()})(...${JSON.stringify(args)})`) : undefined;
+          results.push({ frameId: id, documentId: documentId(frame), result });
         }
+        return results;
       }
     }
   };
   globalThis.chrome = chromeApi;
   require('../extension/players.js');
-  const runtime = createBackgroundRuntime(chromeApi, async () => new Response(JSON.stringify({ error: 'No segments found' }), { status: 404 }));
+  const runtime = createBackgroundRuntime(chromeApi, async url => {
+    const episode = Number(new URL(url).searchParams.get('episode'));
+    providerRequests.push(episode);
+    if (providerDelays.has(episode)) await delay(providerDelays.get(episode));
+    if (providerErrors.has(episode)) return new Response('Temporary provider outage', { status: 503 });
+    const data = providerResponses.get(episode);
+    return data ? new Response(JSON.stringify(data), { status: 200 }) : new Response(JSON.stringify({ error: 'No segments found' }), { status: 404 });
+  });
   runtime.install();
   const popupSender = { id: EXTENSION_ID, url: chromeApi.runtime.getURL('popup.html') };
   async function message(type, extra = {}) { return runtime.dispatch({ type, tabId: 1, ...extra }, popupSender); }
@@ -219,7 +243,14 @@ test('content, popup and background integration with real browser media', { time
       const pathname = new URL(route.request().url()).pathname;
       return pathname === '/fixture-media.wav' ? mediaRoute(route) : route.fulfill({ status: 200, contentType: 'text/html', body: pathname === '/' ? homepage : html });
     });
-    await context.route('https://player.thecalm-fixture.test/**', route => new URL(route.request().url()).pathname === '/fixture-media.wav' ? mediaRoute(route) : route.fulfill({ status: 200, contentType: 'text/html', body: html.replace(/<a id="next-episode"[\s\S]*?<\/a>/, '') }));
+    await context.route('https://player.thecalm-fixture.test/**', route => {
+      const url = new URL(route.request().url());
+      // A navigation in the player document keeps the parent's iframe src
+      // unchanged. Playwright bypasses route handlers for HTTP redirect hops,
+      // so use the equivalent final-document navigation entirely in fixtures.
+      if (url.pathname === '/redirect') return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><script>location.replace("/embed-final?episode=21")</script>' });
+      return url.pathname === '/fixture-media.wav' ? mediaRoute(route) : route.fulfill({ status: 200, contentType: 'text/html', body: html.replace(/<a id="next-episode"[\s\S]*?<\/a>/, '') });
+    });
     await context.route('https://ads.thecalm-fixture.test/**', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><body>Unrelated ad frame</body></html>' }));
     await context.route('https://extension.thecalm-fixture.test/**', async route => {
       const filename = path.basename(new URL(route.request().url()).pathname);
@@ -227,6 +258,13 @@ test('content, popup and background integration with real browser media', { time
       await route.fulfill({ contentType: filename.endsWith('.html') ? 'text/html' : filename.endsWith('.css') ? 'text/css' : 'application/javascript', body: await fs.readFile(path.join(EXTENSION, filename)) });
     });
     await context.exposeBinding('__calmBridge', async (source, request) => {
+      if (request.type === '__TEST_DOCUMENT_COMPLETE') {
+        // Chrome keeps a documentId across pushState/replaceState. Only an
+        // actual document load creates a new owner for frame associations.
+        frameDocuments.set(source.frame, `fixture-document-${nextDocumentId++}`);
+        await Promise.all(navigationCompleted.map(listener => listener({ tabId: 1, frameId: frameId(source.frame), documentId: documentId(source.frame), url: source.frame.url() })));
+        return;
+      }
       if (request.type === '__TEST_QUERY_TABS') return [{ id: 1, url: page.url() }];
       if (request.type === '__TEST_TAB_MESSAGE') return chromeApi.tabs.sendMessage(request.tabId, request.message, request.options);
       if (request.type === '__TEST_HAS_PERMISSION') return chromeApi.permissions.contains(request.request);
@@ -241,7 +279,7 @@ test('content, popup and background integration with real browser media', { time
       if (request.type === 'REPORT_STATUS' && sender.frameId > 0 && embeddedReportDelay) await delay(embeddedReportDelay);
       return runtime.dispatch(request, sender);
     });
-    await context.addInitScript({ content: runtimeShim + `\nif (location.hostname === 'thecalm.site' && window === window.top) document.addEventListener('DOMContentLoaded', () => {\n${shared}\n${content}\n}, { once: true });` });
+    await context.addInitScript({ content: runtimeShim + `\nwindow.addEventListener('load', () => { globalThis.__calmBridge({ type: '__TEST_DOCUMENT_COMPLETE' }).catch(() => {}); }, { once: true });\nif (location.hostname === 'thecalm.site' && window === window.top) document.addEventListener('DOMContentLoaded', () => {\n${shared}\n${content}\n}, { once: true });` });
     page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -463,6 +501,82 @@ test('content, popup and background integration with real browser media', { time
       assert.equal(await page.evaluate(() => sessionStorage.getItem('fixture-next-clicks')), '1', 'the actual site control must receive one programmatic click');
     });
 
+    await t.test('credits follow the exact next episode after the site opens an episode chooser', async () => {
+      await page.goto(EPISODE_URL);
+      await message('IMPORT_TIMINGS', { data: fixture });
+      await until(() => page.locator('video').evaluate(video => video.duration === 2639), 'chooser-based episode media');
+      await page.evaluate(() => {
+        document.querySelector('#next-episode').remove();
+        const next = document.createElement('button');
+        next.type = 'button'; next.textContent = 'Next episode';
+        next.addEventListener('click', () => {
+          const chooser = document.createElement('div');
+          chooser.setAttribute('role', 'dialog');
+          chooser.innerHTML = '<a href="/shows/prison-break/season-1/episode-17">Previous episode</a>' +
+            '<a href="/shows/another-show/season-1/episode-19">Another show</a>' +
+            '<a href="/shows/prison-break/season-1/episode-19">Episode 19</a>';
+          document.body.append(chooser);
+        }, { once: true });
+        document.body.append(next);
+      });
+      await seek(2599.1);
+      await page.waitForURL('**/season-1/episode-19', { timeout: 10000 });
+      assert.equal(new URL(page.url()).pathname, '/shows/prison-break/season-1/episode-19', 'the chooser must resolve to this show\'s exact following episode');
+    });
+
+    await t.test('credits preserve the active player when the next episode link opens a selection page by default', async () => {
+      await page.goto(EPISODE_URL + '?pl=0');
+      await message('IMPORT_TIMINGS', { data: fixture });
+      await until(() => page.locator('video').evaluate(video => video.duration === 2639), 'episode with selected player');
+      await seek(2599.1);
+      await page.waitForURL('**/season-1/episode-19?pl=0', { timeout: 10000 });
+      assert.equal(new URL(page.url()).searchParams.get('pl'), '0', 'the selected player must carry forward instead of returning to the chooser');
+    });
+
+    await t.test('credits continue through a full-page episode list to the next episode player', async () => {
+      await page.goto(EPISODE_URL + '?pl=0');
+      await message('IMPORT_TIMINGS', { data: fixture });
+      await until(() => page.locator('video').evaluate(video => video.duration === 2639), 'full-page chooser media');
+      await page.evaluate(() => {
+        document.querySelector('#next-episode').remove();
+        const next = document.createElement('button');
+        next.type = 'button'; next.textContent = 'Next episode';
+        next.addEventListener('click', () => location.assign('/shows/prison-break/season-1'));
+        document.body.append(next);
+      });
+      await seek(2599.1);
+      await page.waitForURL('**/season-1/episode-19?pl=0', { timeout: 10000 });
+      assert.equal(new URL(page.url()).pathname, '/shows/prison-break/season-1/episode-19', 'the episode list must not require another viewer click');
+    });
+
+    await t.test('turning off auto-next while an episode chooser loads cancels the pending navigation', async () => {
+      await page.goto(EPISODE_URL);
+      await message('IMPORT_TIMINGS', { data: fixture });
+      await until(() => page.locator('video').evaluate(video => video.duration === 2639), 'delayed chooser media');
+      await page.evaluate(() => {
+        document.querySelector('#next-episode').remove();
+        window.fixtureChooserOpened = false;
+        const next = document.createElement('button');
+        next.type = 'button'; next.textContent = 'Next episode';
+        next.addEventListener('click', () => {
+          window.fixtureChooserOpened = true;
+          setTimeout(() => {
+            const link = document.createElement('a');
+            link.href = '/shows/prison-break/season-1/episode-19';
+            link.textContent = 'Episode 19';
+            document.body.append(link);
+          }, 500);
+        });
+        document.body.append(next);
+      });
+      await seek(2599.1);
+      await until(() => page.evaluate(() => window.fixtureChooserOpened), 'opening delayed chooser');
+      await message('SET_SETTINGS', { settings: { autoNext: false } });
+      await delay(900);
+      assert.equal(page.url(), EPISODE_URL, 'a chooser that finishes after auto-next is disabled must not advance');
+      await message('SET_SETTINGS', { settings: { autoNext: true } });
+    });
+
     await t.test('credits automatically leave native video fullscreen before opening the next episode', async () => {
       await page.goto(EPISODE_URL);
       await message('IMPORT_TIMINGS', { data: fixture });
@@ -537,7 +651,84 @@ test('content, popup and background integration with real browser media', { time
       assert.ok(await currentTime() < 305);
     });
 
-    await t.test('embedded media requires a matching host grant and supports child-frame skipping', async () => {
+    await t.test('the following episode automatically uses its own recap and intro markers', async () => {
+      providerResponses.set(19, nextFixture);
+      delete storage.timingCache['tt0455275:1:19'];
+      await page.goto(EPISODE_URL);
+      await message('IMPORT_TIMINGS', { data: fixture });
+      await until(() => page.locator('video').evaluate(video => video.duration === 2639), 'episode 18 before automatic advance');
+      await seek(2599.1);
+      await page.waitForURL('**/season-1/episode-19', { timeout: 10000 });
+      await until(async () => (await message('GET_CONTEXT')).timings?.episode === 19, 'episode 19 provider response');
+      await seek(0.1);
+      await until(async () => (await currentTime()) >= nextFixture.recap.end_sec, 'episode 19 automatic recap');
+      assert.ok(await currentTime() < nextFixture.recap.end_sec + 3, 'the new recap ends at 60 seconds, not the previous episode\'s 52');
+      await seek(fixture.intro.start_sec + 0.1); await delay(400);
+      assert.ok(await currentTime() < fixture.intro.start_sec + 3, 'the previous episode\'s intro must not skip story in the new episode');
+      await seek(nextFixture.intro.start_sec + 0.1);
+      await until(async () => (await currentTime()) >= nextFixture.intro.end_sec, 'episode 19 automatic intro');
+      assert.ok(await currentTime() < nextFixture.intro.end_sec + 3, 'the new intro must use its own endpoint');
+    });
+
+    await t.test('a new SPA media source may finish loading before its episode timings arrive', async () => {
+      await page.goto(EPISODE_URL);
+      await message('IMPORT_TIMINGS', { data: fixture });
+      await until(async () => (await playerStatus()).safety.ok, 'old episode media binding before race');
+      delete storage.timingCache['tt0455275:1:19'];
+      providerDelays.set(19, 1600);
+      try {
+        await page.evaluate(async () => {
+          history.pushState({}, '', '/shows/prison-break/season-1/episode-19');
+          const video = document.querySelector('video');
+          video.pause();
+          const metadata = new Promise(resolve => video.addEventListener('loadedmetadata', resolve, { once: true }));
+          video.src = '/fixture-media.wav?episode=19';
+          video.load();
+          await metadata;
+        });
+        await until(async () => (await message('GET_CONTEXT')).timings?.episode === 19, 'slow episode 19 timings');
+        await until(async () => (await playerStatus()).safety.ok, 'new source binding after slow context');
+        await seek(nextFixture.intro.start_sec + 0.1);
+        await until(async () => (await currentTime()) >= nextFixture.intro.end_sec, 'automatic skip after fast media / slow metadata race');
+        assert.ok(await currentTime() < nextFixture.intro.end_sec + 3);
+      } finally {
+        providerDelays.delete(19);
+      }
+    });
+
+    await t.test('automatic skipping recovers from a temporary timestamp outage without a popup refresh', async () => {
+      const episode20 = structuredClone(nextFixture);
+      episode20.episode = 20;
+      providerResponses.set(20, episode20);
+      providerErrors.add(20);
+      try {
+        await page.goto('https://thecalm.site/shows/prison-break/season-1/episode-20');
+        await until(() => page.locator('video').evaluate(video => video.duration === 2639), 'media during provider outage');
+        await seek(nextFixture.intro.start_sec + 0.1);
+        await until(() => providerRequests.includes(20), 'first failed timestamp request');
+        await delay(300);
+        assert.ok(await currentTime() < nextFixture.intro.start_sec + 3, 'an unavailable provider must not invent markers');
+        providerErrors.delete(20);
+        await until(async () => (await currentTime()) >= nextFixture.intro.end_sec, 'automatic timestamp retry after provider recovery', 10000);
+        assert.ok(await currentTime() < nextFixture.intro.end_sec + 3);
+      } finally {
+        providerErrors.delete(20);
+      }
+    });
+
+    await t.test('the reported episode 21 fetches and automatically skips its actual markers on a fresh page', async () => {
+      providerResponses.set(21, reportedFixture);
+      await page.goto('https://thecalm.site/shows/prison-break/season-1/episode-21?pl=0');
+      await until(() => page.locator('video').evaluate(video => video.duration === 2639), 'reported episode 21 media');
+      await seek(0.1);
+      await until(async () => (await currentTime()) >= reportedFixture.recap.end_sec, 'reported episode 21 automatic recap');
+      assert.ok(await currentTime() < reportedFixture.recap.end_sec + 3, 'the reported episode recap ends at 85 seconds');
+      await seek(reportedFixture.intro.start_sec + 0.1);
+      await until(async () => (await currentTime()) >= reportedFixture.intro.end_sec, 'reported episode 21 automatic intro');
+      assert.ok(await currentTime() < reportedFixture.intro.end_sec + 3, 'the reported episode intro ends at 247 seconds');
+    });
+
+    await t.test('embedded media requires a matching host grant and supports child-frame skipping', async embedded => {
       await page.evaluate(() => window.fixture.navigate(18));
       await message('IMPORT_TIMINGS', { data: fixture });
       await page.evaluate(() => {
@@ -583,6 +774,26 @@ test('content, popup and background integration with real browser media', { time
       await until(async () => (await currentTime(child)) >= 302, 'automatic skip after embedded player changes its own URL');
       assert.ok(await currentTime(child) < 306, 'verified parent/frame association must survive an internal player URL change');
 
+      await embedded.test('cosmetic iframe mutations do not repeatedly reconnect a playing player', async () => {
+        await seek(110, true, child);
+        await delay(400); // Settle the prior frame load before measuring style changes.
+        const before = await page.evaluate(() => window.__calmTestMetrics.messages.PLAYER_FRAMES_CHANGED || 0);
+        await page.evaluate(() => {
+          const iframe = document.getElementById('movie-player');
+          let count = 0;
+          window.__calmFrameStyleStorm = setInterval(() => {
+            iframe.style.transform = `translateX(${++count % 2}px)`;
+            iframe.classList.toggle('cosmetic-player-class');
+          }, 25);
+        });
+        await delay(1250);
+        await page.evaluate(() => clearInterval(window.__calmFrameStyleStorm));
+        await delay(350); // Include the final debounced discovery notification.
+        const after = await page.evaluate(() => window.__calmTestMetrics.messages.PLAYER_FRAMES_CHANGED || 0);
+        assert.ok(after - before <= 1, `unchanged visibility/source must not repeatedly reconnect on cosmetic mutations: ${after - before}`);
+        assert.equal(await child.locator('video').evaluate(video => video.paused), false, 'ordinary player animations must leave playback running');
+      });
+
       await child.locator('video').evaluate(video => video.pause());
       await page.locator('#movie-player').evaluate(iframe => { iframe.style.display = 'none'; });
       await delay(2000);
@@ -620,6 +831,97 @@ test('content, popup and background integration with real browser media', { time
       } finally {
         dropEmbeddedReports = false;
       }
+    });
+
+    await t.test('a reused embedded player binds the following episode when media loads before its delayed context', async () => {
+      const child = page.frames().find(frame => frame.url().startsWith('https://player.thecalm-fixture.test/'));
+      assert.ok(child, 'the already connected player frame must be reused');
+      const childFrameId = frameId(child);
+      await child.locator('video').evaluate(video => video.pause());
+      delete storage.timingCache['tt0455275:1:19'];
+      providerDelays.set(19, 1600);
+      try {
+        await page.evaluate(() => {
+          history.pushState({}, '', '/shows/prison-break/season-1/episode-19');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        });
+        await child.evaluate(async () => {
+          const video = document.querySelector('video');
+          const metadata = new Promise(resolve => video.addEventListener('loadedmetadata', resolve, { once: true }));
+          video.src = '/fixture-media.wav?episode=19';
+          video.load();
+          await metadata;
+        });
+        await until(async () => (await message('GET_CONTEXT')).timings?.episode === 19, 'embedded episode 19 delayed timestamps');
+        await until(async () => {
+          const player = (await deliver(childFrameId, { type: 'GET_PLAYER_STATUS_DIRECT' })).player;
+          return player.episodeKey === 'prison-break:1:19:tt0455275' && player.safety.ok;
+        }, 'reused child new media binding');
+        await seek(0.1, true, child);
+        await until(async () => (await currentTime(child)) >= nextFixture.recap.end_sec, 'reused embedded player automatic recap');
+        assert.ok(await currentTime(child) < nextFixture.recap.end_sec + 3);
+        await seek(nextFixture.intro.start_sec + 0.1, true, child);
+        await until(async () => (await currentTime(child)) >= nextFixture.intro.end_sec, 'reused embedded player automatic intro');
+        assert.ok(await currentTime(child) < nextFixture.intro.end_sec + 3);
+      } finally {
+        providerDelays.delete(19);
+      }
+    });
+
+    await t.test('a new following-episode document reconnects its granted player and skips without another host prompt', async () => {
+      const connectsBefore = permissions.size;
+      await page.goto('https://thecalm.site/shows/prison-break/season-1/episode-19?pl=0');
+      await page.evaluate(() => {
+        document.querySelector('video').remove();
+        const iframe = document.createElement('iframe');
+        iframe.id = 'movie-player';
+        iframe.src = 'https://player.thecalm-fixture.test/embed?episode=19';
+        iframe.width = '720'; iframe.height = '480';
+        document.body.append(iframe);
+      });
+      await until(() => page.frames().some(frame => frame.url().includes('/embed?episode=19')), 'following-episode new iframe document');
+      const child = page.frames().find(frame => frame.url().includes('/embed?episode=19'));
+      await until(() => child.locator('video').evaluate(video => video.duration === 2639), 'new iframe real media');
+      await seek(0.1, true, child);
+      await until(async () => (await currentTime(child)) >= nextFixture.recap.end_sec, 'automatically reconnected following-episode recap');
+      assert.ok(await currentTime(child) < nextFixture.recap.end_sec + 3);
+      await seek(nextFixture.intro.start_sec + 0.1, true, child);
+      await until(async () => (await currentTime(child)) >= nextFixture.intro.end_sec, 'automatically reconnected following-episode intro');
+      assert.ok(await currentTime(child) < nextFixture.intro.end_sec + 3);
+      assert.equal(permissions.size, connectsBefore, 'the existing grant must be sufficient for the next document');
+    });
+
+    await t.test('a previously granted player is detected after its iframe redirects on a fresh episode page', async () => {
+      await page.goto('https://thecalm.site/shows/prison-break/season-1/episode-21?pl=0');
+      await page.evaluate(() => {
+        document.querySelector('video').remove();
+        const hidden = document.createElement('iframe');
+        hidden.id = 'hidden-same-host-player';
+        hidden.src = 'https://player.thecalm-fixture.test/unselected';
+        hidden.style.display = 'none';
+        const iframe = document.createElement('iframe');
+        iframe.id = 'movie-player';
+        iframe.src = 'https://player.thecalm-fixture.test/redirect?episode=21';
+        iframe.width = '720'; iframe.height = '480';
+        document.body.append(hidden, iframe);
+      });
+      await until(() => page.frames().some(frame => frame.url().endsWith('/embed-final?episode=21')), 'redirected player document');
+      const child = page.frames().find(frame => frame.url().endsWith('/embed-final?episode=21'));
+      assert.equal(await page.locator('#movie-player').getAttribute('src'), 'https://player.thecalm-fixture.test/redirect?episode=21', 'the original iframe source must differ from the final document URL');
+      await until(() => child.locator('video').evaluate(video => video.duration === 2639), 'redirected player real media');
+      await seek(0.1, true, child);
+      await until(async () => (await currentTime(child)) >= reportedFixture.recap.end_sec, 'redirected player automatic recap');
+      assert.ok(await currentTime(child) < reportedFixture.recap.end_sec + 3);
+      await until(async () => (await playerStatus()).videoFound, 'popup player detection after redirect');
+      await seek(reportedFixture.intro.start_sec + 0.1, true, child);
+      await until(async () => (await currentTime(child)) >= reportedFixture.intro.end_sec, 'redirected player automatic intro');
+      assert.ok(await currentTime(child) < reportedFixture.intro.end_sec + 3);
+      const hidden = page.frames().find(frame => frame.url().endsWith('/unselected'));
+      assert.ok(hidden, 'a different same-host frame must be present');
+      await until(() => hidden.locator('video').evaluate(video => video.duration === 2639), 'unselected same-host media');
+      await seek(reportedFixture.intro.start_sec + 0.1, true, hidden);
+      await delay(500);
+      assert.ok(await currentTime(hidden) < reportedFixture.intro.start_sec + 3, 'visibility and frame identity must keep the unselected same-host player untouched');
     });
 
     assert.deepEqual(errors, [], 'real browser pages should not report script errors');

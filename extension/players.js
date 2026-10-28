@@ -43,6 +43,82 @@
     return cached.promise;
   }
 
+  function rootFrame(frames, frame) {
+    const visited = new Set();
+    while (frame && frame.frameId > 0 && frame.parentFrameId !== 0) {
+      if (visited.has(frame.frameId)) return null;
+      visited.add(frame.frameId);
+      frame = frames.find(item => item.frameId === frame.parentFrameId);
+    }
+    return frame?.parentFrameId === 0 ? frame : null;
+  }
+
+  function sameDocument(before, after) {
+    return Boolean(before && after && before.frameId === after.frameId &&
+      (before.documentId ? before.documentId === after.documentId : frameUrl(before.url) === frameUrl(after.url)));
+  }
+
+  async function verifyRedirectedRoots(tabId, frames, candidates, associated, direct) {
+    const visible = candidates.filter(item => item.visible && Number.isInteger(item.frameIndex) && item.frameIndex >= 0);
+    if (!visible.length) return false;
+    const origins = new Map();
+    const probes = [];
+    for (const frame of frames) {
+      const parent = rootFrame(frames, frame);
+      if (!parent || direct.has(parent.frameId)) continue;
+      const origin = ownOrigin(frame.url);
+      if (!origin) continue;
+      if (!origins.has(origin)) origins.set(origin, chrome.permissions.contains({ origins: [`${origin}/*`] }));
+      if (!await origins.get(origin)) continue;
+      probes.push((async () => {
+        try {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId, frameIds: [frame.frameId] },
+            func: () => {
+              // Cross-origin WindowProxy indexed access is allowed. This
+              // identifies the actual DOM ancestry without reading its page.
+              const path = [];
+              let current = window;
+              while (current !== window.top) {
+                const parent = current.parent;
+                let index = -1;
+                for (let i = 0; i < parent.length; i++) if (parent[i] === current) { index = i; break; }
+                if (index < 0) return null;
+                path.unshift(index); current = parent;
+              }
+              return path;
+            },
+          });
+          const result = results.find(item => item.frameId === frame.frameId);
+          if (!result || (frame.documentId && result.documentId !== frame.documentId) ||
+              !Array.isArray(result.result) || !result.result.length || result.result.some(index => !Number.isInteger(index) || index < 0)) return null;
+          return { frame, parent, index: result.result[0] };
+        } catch { return null; }
+      })());
+    }
+    const verified = (await Promise.all(probes)).filter(Boolean);
+    if (!verified.length) return false;
+    // A redirect may race a reload or DOM reorder. Both snapshots must still
+    // describe the same documents and visible iframe source at that index.
+    const currentFrames = await chrome.webNavigation.getAllFrames({ tabId }) || [];
+    if (!sameDocument(frames.find(item => item.frameId === 0), currentFrames.find(item => item.frameId === 0))) return false;
+    let currentCandidates;
+    try { currentCandidates = (await chrome.tabs.sendMessage(tabId, { type: "GET_FRAME_CANDIDATES" }, { frameId: 0 }))?.candidates || []; }
+    catch { return false; }
+    let changed = false;
+    for (const { frame, parent, index } of verified) {
+      if (!sameDocument(frame, currentFrames.find(item => item.frameId === frame.frameId)) ||
+          !sameDocument(parent, currentFrames.find(item => item.frameId === parent.frameId))) continue;
+      const initial = visible.find(item => item.frameIndex === index);
+      const current = currentCandidates.find(item => item.frameIndex === index && item.visible);
+      if (!initial || !current || frameUrl(initial.url) !== frameUrl(current.url)) continue;
+      const source = await fingerprint(current.url);
+      if (!source) continue;
+      associated.roots[parent.frameId] = source; direct.add(parent.frameId); changed = true;
+    }
+    return changed;
+  }
+
   async function discover(tabId) {
     const tab = await chrome.tabs.get(tabId);
     if (!CalmSkip.parseEpisodeUrl(tab.url)) throw new Error("Open an episode on TheCalm first.");
@@ -69,6 +145,7 @@
       // still identifies it; current-origin permissions are checked separately.
       if (roots.has(associated.roots[frame.frameId])) direct.add(frame.frameId);
     }
+    changed = await verifyRedirectedRoots(tabId, frames, candidates, associated, direct) || changed;
     if (changed) {
       try { await chrome.storage.session?.set({ [sessionKey(tabId)]: associated }); } catch { /* Keep the in-memory association if storage is unavailable. */ }
     }
@@ -124,8 +201,8 @@
     return record.promise;
   }
 
-  async function connect(tabId, requested) {
-    const discovered = await discovery(tabId, Boolean(requested));
+  async function connect(tabId, requested, refresh = false) {
+    const discovered = await discovery(tabId, Boolean(requested) || refresh);
     const actual = new Set(discovered.playerOrigins.map(item => item.origin));
     const origins = requested || discovered.playerOrigins.filter(item => item.granted).map(item => item.origin);
     if (!Array.isArray(origins) || origins.some(origin => !actual.has(origin))) throw new Error("The embedded player changed. Reopen the popup and choose its current host.");
@@ -187,13 +264,14 @@
 
   globalThis.CalmPlayers = {
     trackTab,
+    async reconnectTab(tabId) { return reconnect(tabId, null); },
     async isVisibleFrame(tabId, frameId) {
       try { return (await discovery(tabId)).frames.some(frame => frame.frameId === frameId); }
       catch { return false; }
     },
     async handleMessage(message) {
       if (!Number.isInteger(message.tabId)) return { ok: false, error: "No TheCalm tab was selected." };
-      if (message.type === "PLAYER_ORIGINS") return { ok: true, playerOrigins: (await discovery(message.tabId, true)).playerOrigins };
+      if (message.type === "PLAYER_ORIGINS") return connect(message.tabId, undefined, true);
       return connect(message.tabId, message.origins);
     }
   };

@@ -1,6 +1,6 @@
 {
   "name": "thecalm-skip",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "A personal Brave extension for TheCalm intro, recap, and credit skipping.",
   "scripts": {

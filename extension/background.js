@@ -4,7 +4,7 @@
   if (!root.CalmSkip && typeof importScripts === "function") importScripts("shared.js");
   if (typeof importScripts === "function") importScripts("players.js");
   const Core = root.CalmSkip || (typeof require === "function" ? require("./shared.js") : null);
-  const MESSAGE_TYPES = new Set(["GET_CONTEXT", "SET_EPISODE", "SET_SETTINGS", "UPDATE_SETTINGS", "SET_MAPPING", "REFRESH_TIMINGS", "IMPORT_TIMINGS", "AUTHORIZE_SKIP", "REPORT_STATUS", "NEXT_EPISODE", "UNDO_SKIP", "PLAYER_COMMAND", "CONNECT_PLAYER", "PLAYER_ORIGINS"]);
+  const MESSAGE_TYPES = new Set(["GET_CONTEXT", "SET_EPISODE", "SET_SETTINGS", "UPDATE_SETTINGS", "SET_MAPPING", "REFRESH_TIMINGS", "IMPORT_TIMINGS", "AUTHORIZE_SKIP", "REPORT_STATUS", "NEXT_EPISODE", "UNDO_SKIP", "PLAYER_COMMAND", "CONNECT_PLAYER", "PLAYER_ORIGINS", "PLAYER_FRAMES_CHANGED"]);
   const CACHE_TTL = 24 * 60 * 60 * 1000;
   const MISSING_TTL = 15 * 60 * 1000;
   const SETTINGS_SCHEMA_VERSION = 2;
@@ -183,12 +183,20 @@
       return context ? `${context.slug}:${context.season}:${context.episode}:${context.imdbId || ""}` : "";
     }
 
-    async function getContext(tab, refresh = false) {
+    async function getContext(tab, refresh = false, attempt = 0) {
       const state = await readState();
       const context = await contextFor(tab, state);
       if (!context?.imdbId) return { ok: true, context, timings: null, settings: state.settings, status: "unidentified", playback: playbackByTab.get(tab.id) || null };
       const result = await fetchTimings(context, refresh);
       const latestState = await readState();
+      const currentTab = await chromeApi.tabs.get(tab.id);
+      const currentContext = Core.isCalmUrl(currentTab.url) ? await contextFor(currentTab, latestState) : null;
+      // A slow provider request can span a client-side episode change. Return
+      // the new episode's data instead of reviving the previous frame context.
+      if (contentEpisodeKey(currentContext) !== contentEpisodeKey(context)) {
+        if (attempt < 2 && currentContext) return getContext(currentTab, false, attempt + 1);
+        return { ok: false, retryable: true, error: "The episode changed while its timings loaded. Reconnecting now." };
+      }
       return { ok: true, context, settings: latestState.settings, playback: playbackByTab.get(tab.id) || null, ...result };
     }
 
@@ -271,6 +279,11 @@
           return { ok: true, imdbId };
         }
         const tab = await getTab(message, sender);
+        if (message.type === "PLAYER_FRAMES_CHANGED") {
+          if (!sender.tab || sender.frameId !== 0 || !Core.parseEpisodeUrl(tab.url)) throw new Error("Only the main episode page can reconnect its players.");
+          await players?.reconnectTab?.(tab.id);
+          return { ok: true };
+        }
         if (message.type === "SET_EPISODE") {
           if (!sender.tab || sender.frameId !== 0) throw new Error("Only the main TheCalm page can select an episode.");
           const actual = Core.parseEpisodeUrl(tab.url);

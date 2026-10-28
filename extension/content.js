@@ -14,6 +14,8 @@
     discoveryActive: false, observers: [], videoEvents: new Map(), selectionDirty: true,
     tickQueued: false, uiTimer: null, retryTimer: null, actionPending: null,
     denial: null, forceReport: false, lastBlockReason: "",
+    contextRetryTimer: null, contextRetryAttempt: 0, contextFailed: false,
+    frameReconnectTimer: null, frameReconnectForce: false, frameReconnectSignature: null, frameEvents: new Map(),
   };
 
   async function message(type, fields = {}) {
@@ -59,17 +61,53 @@
     state.handled.clear(); state.undo = null; state.toast = null; state.countdown = null;
     state.lastAction = ""; state.activeFrameId = null; state.actionPending = null; state.denial = null;
     clearTimeout(state.uiTimer); clearTimeout(state.retryTimer);
+    clearTimeout(state.contextRetryTimer); state.contextRetryTimer = null;
+    state.contextRetryAttempt = 0; state.contextFailed = false;
     state.players.clear();
+  }
+
+  function retryContext() {
+    if (state.contextRetryTimer || state.contextRetryAttempt >= 5 || (isTop && !Core.parseEpisodeUrl(location.href))) return;
+    const epoch = state.epoch;
+    const delay = Math.min(60000, 3000 * 2 ** state.contextRetryAttempt++);
+    state.contextRetryTimer = setTimeout(() => {
+      state.contextRetryTimer = null;
+      if (epoch === state.epoch && state.contextFailed) refreshContext();
+    }, delay);
   }
 
   async function refreshContext(select = false) {
     const epoch = state.epoch;
     const sequence = ++state.refreshSequence;
+    // A resource may finish loading before the next episode's timings arrive.
+    // Bind only metadata that existed when this authoritative request began;
+    // never attach a newly loaded resource to the previous cached response.
+    const pendingMedia = state.videos.map(video => ({ video, binding: state.bindings.get(video) }))
+      .filter(({ binding }) => binding?.pendingContext && !binding.awaitingMetadata);
     const response = await message(select && isTop ? "SET_EPISODE" : "GET_CONTEXT", select && isTop ? { url: location.href, imdbId: extractImdb() } : {});
-    if (epoch !== state.epoch || sequence !== state.refreshSequence || !response?.ok) return;
+    if (epoch !== state.epoch || sequence !== state.refreshSequence) return;
+    if (!response?.ok) { state.contextFailed = true; state.lastBlockReason = response?.error || "Waiting to reconnect episode timings."; retryContext(); return; }
+    if (isTop) {
+      const current = Core.parseEpisodeUrl(location.href);
+      const context = response.context;
+      if (!current || !context || current.slug !== context.slug || current.season !== context.season || current.episode !== context.episode) {
+        const observedEpoch = state.epoch;
+        checkNavigation();
+        if (current && observedEpoch === state.epoch) { state.contextFailed = true; retryContext(); }
+        return;
+      }
+    }
     if (episodeIdentity(response) !== episodeIdentity()) resetEpisode();
     state.response = response;
+    for (const { video, binding } of pendingMedia) {
+      if (video.isConnected && state.bindings.get(video) === binding) {
+        binding.episode = mediaEpisodeIdentity() || null; binding.pendingContext = false;
+      }
+    }
     startDiscovery();
+    state.contextFailed = response.status === "error";
+    if (state.contextFailed) retryContext();
+    else { clearTimeout(state.contextRetryTimer); state.contextRetryTimer = null; state.contextRetryAttempt = 0; }
     if (!response.settings.enabled) state.countdown = null;
     state.forceReport = true;
     scheduleTick();
@@ -91,20 +129,54 @@
     queueMicrotask(() => { state.tickQueued = false; tick(); });
   }
 
+  function scheduleFrameReconnect(force = false) {
+    if (!isTop || !Core.parseEpisodeUrl(location.href)) return;
+    state.frameReconnectForce ||= force;
+    if (state.frameReconnectTimer) return;
+    state.frameReconnectTimer = setTimeout(() => {
+      state.frameReconnectTimer = null;
+      const force = state.frameReconnectForce; state.frameReconnectForce = false;
+      if (!Core.parseEpisodeUrl(location.href)) return;
+      // Cosmetic iframe animations must not restart worker discovery. Measure
+      // only after coalescing events, and ignore changes in area or position.
+      const signature = JSON.stringify(frameCandidates().map(({ url, visible, frameIndex }) => ({ url, visible, frameIndex })).sort((a, b) => a.frameIndex - b.frameIndex));
+      if (!force && signature === state.frameReconnectSignature) return;
+      state.frameReconnectSignature = signature; message("PLAYER_FRAMES_CHANGED");
+    }, 250);
+  }
+
+  function watchFrame(frame) {
+    if (!isTop || state.frameEvents.has(frame)) return;
+    const abort = new AbortController();
+    const observer = new MutationObserver(records => scheduleFrameReconnect(records.some(record => record.attributeName === "src")));
+    observer.observe(frame, { attributes: true, attributeFilter: ["src", "hidden", "style", "class"] });
+    state.frameEvents.set(frame, { abort, observer });
+    frame.addEventListener("load", () => scheduleFrameReconnect(true), { signal: abort.signal });
+    scheduleFrameReconnect(true);
+  }
+
   function watchVideo(video) {
     if (state.videoEvents.has(video)) return;
     const abort = new AbortController();
     state.videoEvents.set(video, abort); state.videos.push(video);
     const onMedia = event => {
       if (["emptied", "loadstart"].includes(event.type)) {
-        state.bindings.set(video, { episode: null, awaitingMetadata: true });
+        state.bindings.set(video, { episode: null, awaitingMetadata: true, pendingContext: true });
         if (video === state.video) { state.handled.clear(); state.undo = null; state.toast = null; state.countdown = null; state.actionPending = null; }
       }
-      if (event.type === "loadedmetadata") state.bindings.set(video, { episode: mediaEpisodeIdentity() || null, awaitingMetadata: false });
+      if (event.type === "loadedmetadata") {
+        state.bindings.set(video, { episode: null, awaitingMetadata: false, pendingContext: true });
+        checkNavigation(); refreshContext();
+      }
+      if (event.type === "play" && state.contextFailed) { clearTimeout(state.contextRetryTimer); state.contextRetryTimer = null; refreshContext(); }
       if (event.type !== "timeupdate") { state.selectionDirty = true; state.forceReport = true; }
       scheduleTick();
     };
     for (const type of ["loadedmetadata", "durationchange", "play", "playing", "pause", "timeupdate", "seeking", "seeked", "emptied", "loadstart", "ended"]) video.addEventListener(type, onMedia, { signal: abort.signal });
+    // A replacement video element can have loaded before its added subtree is
+    // observed. It needs the same current-context check as loadedmetadata.
+    state.bindings.set(video, { episode: null, awaitingMetadata: video.readyState < 1, pendingContext: true });
+    if (video.readyState >= 1 && video.duration > 60) refreshContext();
     state.selectionDirty = true;
   }
 
@@ -114,6 +186,7 @@
     const inspect = element => {
       if (element.id === "thecalm-skip-overlay") return;
       if (element.localName === "video" && !state.videoEvents.has(element)) { watchVideo(element); changed = true; }
+      if (element.localName === "iframe") watchFrame(element);
       if (element.shadowRoot && !state.observers.some(item => item.root === element.shadowRoot)) {
         observeRoot(element.shadowRoot);
         changed = visitAdded(element.shadowRoot) || changed;
@@ -133,6 +206,9 @@
         for (const node of record.addedNodes) changed = visitAdded(node) || changed;
         for (const node of record.removedNodes) {
           if (node.nodeType !== 1) continue;
+          for (const [frame, record] of state.frameEvents) {
+            if (!frame.isConnected) { record.abort.abort(); record.observer.disconnect(); state.frameEvents.delete(frame); }
+          }
           for (const video of [...state.videos]) {
             if (node === video || node.contains(video) || !video.isConnected) {
               state.videoEvents.get(video)?.abort(); state.videoEvents.delete(video);
@@ -160,9 +236,13 @@
   function stopDiscovery() {
     for (const item of state.observers) item.observer.disconnect();
     for (const abort of state.videoEvents.values()) abort.abort();
+    for (const record of state.frameEvents.values()) { record.abort.abort(); record.observer.disconnect(); }
+    state.frameEvents.clear(); clearTimeout(state.frameReconnectTimer); state.frameReconnectTimer = null;
+    state.frameReconnectForce = false; state.frameReconnectSignature = null;
     state.observers = []; state.videoEvents.clear(); state.videos = []; state.video = null;
     state.discoveryActive = false; state.selectionDirty = true;
     clearTimeout(state.uiTimer); clearTimeout(state.retryTimer);
+    clearTimeout(state.contextRetryTimer); state.contextRetryTimer = null;
   }
 
   function geometry(video) {
@@ -192,8 +272,8 @@
     state.actionPending = null; state.denial = null;
     if (video) {
       let binding = state.bindings.get(video);
-      if (!binding || (binding.awaitingMetadata && video.readyState >= 1)) {
-        binding = { episode: mediaEpisodeIdentity() || null, awaitingMetadata: false };
+      if (!binding) {
+        binding = { episode: mediaEpisodeIdentity() || null, awaitingMetadata: video.readyState < 1, pendingContext: false };
         state.bindings.set(video, binding);
       }
     }
@@ -201,7 +281,7 @@
 
   function mediaMatchesEpisode() {
     const binding = state.video && state.bindings.get(state.video);
-    if (!binding || binding.awaitingMetadata || !mediaEpisodeIdentity()) return false;
+    if (!binding || binding.awaitingMetadata || binding.pendingContext || !mediaEpisodeIdentity()) return false;
     if (!binding.episode) binding.episode = mediaEpisodeIdentity();
     return binding.episode === mediaEpisodeIdentity();
   }
@@ -287,26 +367,60 @@
     return { ok: true };
   }
 
+  const NEXT_CONTINUATION_KEY = "__thecalmSkipNextEpisode_v1";
+  let nextNavigation = null;
+
+  function episodeRoots() {
+    return [document, ...state.observers.map(item => item.root).filter(root => root !== document && root.host?.isConnected)];
+  }
+
+  function playerChoice(value) {
+    try {
+      const choice = new URL(value, location.href).searchParams.get("pl");
+      return /^(?:0|[1-9]\d?)$/.test(choice || "") ? choice : null;
+    } catch { return null; }
+  }
+
+  function episodePlaybackUrl(value, base = location.href, preferredPlayer = playerChoice(location.href)) {
+    const url = new URL(value, base);
+    if (!Core.parseEpisodeUrl(url.href)) return null;
+    // Preserve the selected player, without copying expiring navigation/tracking tokens.
+    if (playerChoice(url.href) === null && preferredPlayer !== null) url.searchParams.set("pl", preferredPlayer);
+    return url.href;
+  }
+
+  function nextEpisodeLink(context, roots = episodeRoots(), base = location.href, preferredPlayer = playerChoice(location.href)) {
+    const links = [...new Set(roots.flatMap(root => [...root.querySelectorAll("a[href]")]))];
+    const candidates = links.map(link => {
+      let url;
+      try { url = new URL(link.getAttribute("href"), base); } catch { return null; }
+      const episode = Core.parseEpisodeUrl(url.href);
+      if (!episode || episode.slug !== context.slug) return null;
+      const explicit = (link.getAttribute("rel") || "").split(/\s+/).includes("next") || /next\s*episode/i.test(`${link.getAttribute("aria-label")} ${link.title} ${link.textContent}`);
+      const sameSeason = episode.season === context.season && episode.episode === context.episode + 1;
+      const nextSeason = episode.season === context.season + 1 && episode.episode === 1 && explicit;
+      return sameSeason || nextSeason ? { element: link, url: episodePlaybackUrl(url.href, base, preferredPlayer), priority: Number(sameSeason) * 4 + Number(playerChoice(url.href) !== null) * 2 + Number(explicit) } : null;
+    }).filter(Boolean).sort((a, b) => b.priority - a.priority);
+    return candidates[0] || null;
+  }
+
+  function catalogUrl(value, context, base = location.href) {
+    try {
+      const url = new URL(value, base);
+      const path = url.pathname.replace(/\/$/, "");
+      if (!Core.isCalmUrl(url.href) || url.origin !== location.origin) return null;
+      return path === `/shows/${context.slug}` || path === `/shows/${context.slug}/season-${context.season}` ? url.href : null;
+    } catch { return null; }
+  }
+
   function nextControl() {
     const context = state.response?.context;
     if (!isTop || !context || episodeIdentity() !== episodeIdentity({ context: Core.resolveEpisode(location.href, { [context.slug]: context.imdbId }) })) return null;
-    const roots = [document, ...state.observers.map(item => item.root).filter(root => root !== document && root.host?.isConnected)];
-    const links = [...new Set(roots.flatMap(root => [...root.querySelectorAll("a[href]")]))];
-    const candidates = links.filter(link => {
-      const episode = Core.parseEpisodeUrl(link.href);
-      if (!episode || episode.slug !== context.slug) return false;
-      return episode.season === context.season && episode.episode === context.episode + 1;
-    });
-    if (candidates.length) return { element: candidates[0], url: candidates[0].href };
-    // Crossing seasons requires the site's explicit next control; never invent an episode URL.
-    const nextSeason = links.find(link => {
-      const episode = Core.parseEpisodeUrl(link.href);
-      return episode && episode.slug === context.slug && episode.season === context.season + 1 && episode.episode === 1 &&
-        (link.rel.split(/\s+/).includes("next") || /next\s*episode/i.test(`${link.getAttribute("aria-label")} ${link.title} ${link.textContent}`));
-    });
-    if (nextSeason) return { element: nextSeason, url: nextSeason.href };
-    const buttons = [...new Set(roots.flatMap(root => [...root.querySelectorAll('button,[role="button"]')]))];
-    const button = buttons.find(element => {
+    const roots = episodeRoots();
+    const direct = nextEpisodeLink(context, roots);
+    if (direct) return direct;
+    const controls = [...new Set(roots.flatMap(root => [...root.querySelectorAll('a[href],button,[role="button"]')]))];
+    const button = controls.find(element => {
       if (element.disabled || element.getAttribute("aria-disabled") === "true") return false;
       const names = [element.getAttribute("aria-label"), element.title, element.textContent, element.getAttribute("data-testid"), element.getAttribute("data-action")];
       const explicitNext = names.some(name => /^(?:(?:play|watch|go\s+to)\s+)?next\s+episode(?:\s*[:\-–—]\s*.+|\s*[›»→▶])?$/i.test(String(name || "").trim().replace(/\s+/g, " ")) || /^(?:player[-_])?next[-_]episode(?:[-_]button)?$/i.test(String(name || "")));
@@ -315,7 +429,122 @@
       const style = getComputedStyle(element);
       return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 && ancestorsVisible(element);
     });
-    return button ? { element: button, url: null } : null;
+    if (button) return { element: button, url: null, catalog: catalogUrl(button.getAttribute("href") || button.getAttribute("data-href") || button.getAttribute("data-url"), context) };
+    // Read a known season/show catalog when the player exposes no direct next link.
+    const catalog = controls.map(element => catalogUrl(element.getAttribute("href"), context)).find(Boolean);
+    return catalog ? { element: null, url: null, catalog } : null;
+  }
+
+  function clearNextContinuation() {
+    try { sessionStorage.removeItem(NEXT_CONTINUATION_KEY); } catch { /* Storage can be disabled by site policy. */ }
+  }
+
+  function saveNextContinuation(context, automatic) {
+    try {
+      sessionStorage.setItem(NEXT_CONTINUATION_KEY, JSON.stringify({
+        slug: context.slug, season: context.season, episode: context.episode,
+        player: playerChoice(location.href), automatic, started: Date.now(),
+      }));
+    } catch { /* In-page chooser resolution still works without session storage. */ }
+  }
+
+  function waitForNextEpisode(context, preferredPlayer, isCurrent, timeout = 4000) {
+    return new Promise(resolve => {
+      let timer, queued, settled = false;
+      const observer = new MutationObserver(records => {
+        // A chooser can render in several batches; text-only playback updates do not trigger a scan.
+        if (!records.some(record => record.type === "attributes" || [...record.addedNodes].some(node => node.nodeType === 1))) return;
+        if (!queued) queued = setTimeout(() => { queued = null; inspect(); }, 50);
+      });
+      const finish = result => {
+        if (settled) return;
+        settled = true; observer.disconnect(); clearTimeout(timer); clearTimeout(queued); resolve(result);
+      };
+      const inspect = () => {
+        if (settled) return;
+        const actual = Core.parseEpisodeUrl(location.href);
+        if (actual?.slug === context.slug && ((actual.season === context.season && actual.episode === context.episode + 1) || (actual.season === context.season + 1 && actual.episode === 1))) { finish({ arrived: true }); return; }
+        if (!isCurrent()) { finish(null); return; }
+        const next = nextEpisodeLink(context, episodeRoots(), location.href, preferredPlayer);
+        if (next) finish(next);
+      };
+      observer.observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ["href"] });
+      timer = setTimeout(() => finish(null), timeout);
+      inspect();
+      // A site button can update only history; inspect once after its synchronous click.
+      queueMicrotask(inspect);
+    });
+  }
+
+  async function catalogNextEpisode(value, context, preferredPlayer) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    try {
+      // Same-origin HTML only: the logged-in site resolves its own actual episode links.
+      const response = await fetch(value, { credentials: "same-origin", signal: controller.signal, headers: { Accept: "text/html" } });
+      if (!response.ok || !catalogUrl(response.url || value, context)) return null;
+      const html = await response.text();
+      if (html.length > 2000000) return null;
+      return nextEpisodeLink(context, [new DOMParser().parseFromString(html, "text/html")], response.url || value, preferredPlayer);
+    } catch { return null; }
+    finally { clearTimeout(timer); }
+  }
+
+  async function openNextEpisode(request) {
+    if (nextNavigation) return { ok: false, error: "The next episode is already opening." };
+    const context = state.response?.context;
+    const identity = episodeIdentity();
+    const settingsAllow = () => !request.automatic || !state.response?.settings || (state.response.settings.enabled && state.response.settings.autoNext);
+    const current = () => {
+      const actual = Core.parseEpisodeUrl(location.href);
+      return actual?.slug === context?.slug && actual.season === context.season && actual.episode === context.episode && episodeIdentity() === identity && settingsAllow();
+    };
+    const chooser = () => Boolean(catalogUrl(location.href, context)) && settingsAllow();
+    if (!context || request.episodeKey !== identity || !current()) return { ok: false, error: "The episode or automatic-skip setting changed." };
+    const control = nextControl();
+    if (!control) return { ok: false, error: "No next-episode link or control was found. Playback will continue." };
+    if (control.url) { setTimeout(() => { if (current()) location.assign(control.url); }, 0); return { ok: true }; }
+    nextNavigation = {};
+    try {
+      const player = playerChoice(location.href);
+      if (control.catalog) {
+        const next = await catalogNextEpisode(control.catalog, context, player);
+        if (!current()) return { ok: false, error: "The episode or automatic-skip setting changed." };
+        if (next) { setTimeout(() => { if (current()) location.assign(next.url); }, 0); return { ok: true }; }
+      }
+      if (!control.element) return { ok: false, error: "The episode list did not contain the next episode. Playback will continue." };
+      saveNextContinuation(context, Boolean(request.automatic));
+      const waiting = waitForNextEpisode(context, player, () => current() || chooser());
+      control.element.click();
+      const next = await waiting;
+      clearNextContinuation();
+      if (next?.arrived) return { ok: true };
+      if (next?.url && (current() || chooser())) {
+        const latest = await message("GET_CONTEXT");
+        const allowed = () => (current() || chooser()) && (!request.automatic || (latest?.ok && latest.settings?.enabled && latest.settings.autoNext));
+        if (allowed()) { setTimeout(() => { if (allowed()) location.assign(next.url); }, 0); return { ok: true }; }
+      }
+      return { ok: false, error: "The episode chooser did not expose the next episode. Playback will continue." };
+    } finally { nextNavigation = null; }
+  }
+
+  async function resumeNextEpisode() {
+    if (!isTop) return;
+    let pending;
+    try { pending = JSON.parse(sessionStorage.getItem(NEXT_CONTINUATION_KEY)); } catch { clearNextContinuation(); return; }
+    if (!pending) return;
+    clearNextContinuation();
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(pending.slug || "") || !Number.isSafeInteger(pending.season) || pending.season < 0 || !Number.isSafeInteger(pending.episode) || pending.episode < 1 || !Number.isFinite(pending.started) || Date.now() - pending.started < 0 || Date.now() - pending.started > 15000 || !catalogUrl(location.href, pending)) return;
+    const player = /^(?:0|[1-9]\d?)$/.test(pending.player || "") ? pending.player : null;
+    const response = await message("GET_CONTEXT");
+    const enabled = () => !pending.automatic || Boolean(response?.ok && response.settings?.enabled && response.settings.autoNext);
+    if (!enabled()) return;
+    const catalog = location.href;
+    const next = await waitForNextEpisode(pending, player, () => location.href === catalog && enabled());
+    if (next?.url && location.href === catalog && enabled()) {
+      const latest = await message("GET_CONTEXT");
+      if (location.href === catalog && (!pending.automatic || (latest?.ok && latest.settings?.enabled && latest.settings.autoNext))) location.assign(next.url);
+    }
   }
 
   async function advance(automatic = false) {
@@ -343,7 +572,9 @@
     const frames = [...document.querySelectorAll("iframe[src]")].map(frame => {
       const rect = frame.getBoundingClientRect();
       const style = getComputedStyle(frame);
-      return { url: frame.src, visible: rect.width >= 80 && rect.height >= 45 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 && ancestorsVisible(frame), area: rect.width * rect.height };
+      let frameIndex = -1;
+      for (let i = 0; i < window.frames.length; i++) if (window.frames[i] === frame.contentWindow) { frameIndex = i; break; }
+      return { url: frame.src, frameIndex, visible: rect.width >= 80 && rect.height >= 45 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 && ancestorsVisible(frame), area: rect.width * rect.height };
     }).filter(frame => frame.visible).sort((a, b) => b.area - a.area);
     return frames;
   }
@@ -488,18 +719,19 @@
       message("PLAYER_COMMAND", { frameId: state.activeFrameId, command: "UNDO_SKIP" }).then(respond); return true;
     }
     if (request.type === "NEXT_EPISODE" && isTop) {
-      const control = nextControl();
-      if (!control) respond({ ok: false, error: "No next-episode link or control was found. Playback will continue." });
-      else {
-        respond({ ok: true });
-        setTimeout(() => control.url ? location.assign(control.url) : control.element.click(), 0);
-      }
-      return false;
+      openNextEpisode(request).then(respond, () => respond({ ok: false, error: "The next episode could not be opened. Playback will continue." }));
+      return true;
     }
     return false;
   });
 
+  if (isTop) resumeNextEpisode();
+
   document.addEventListener("fullscreenchange", () => { state.selectionDirty = true; scheduleTick(); });
+  window.addEventListener("online", () => {
+    if (!state.contextFailed) return;
+    clearTimeout(state.contextRetryTimer); state.contextRetryTimer = null; state.contextRetryAttempt = 0; refreshContext();
+  });
   window.addEventListener("resize", () => { if (state.discoveryActive) { state.selectionDirty = true; scheduleTick(); } });
   if (isTop) { state.url = "__initial__"; checkNavigation(); }
   else refreshContext();
