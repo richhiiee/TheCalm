@@ -1,6 +1,6 @@
 # CalmSkip — Chrome Web Store listing
 
-Copy the text below into the matching store fields. The first release is **public and searchable**, as selected by the publisher. Submission still requires Google's review.
+Copy the text below into the matching store fields for the **0.1.6 update**. CalmSkip 0.1.5 is already public and searchable. The update requires a separate upload and review on the existing item.
 
 ## Name
 
@@ -20,12 +20,13 @@ CalmSkip uses IntroDB community timestamps to skip supported episode recaps and 
 • Keep your selected player when following the next episode.
 • Control recap skipping, intro skipping, and next episode separately.
 • Switch to manual mode when you prefer skip buttons.
+• Identify series automatically, choose between ambiguous matches, or correct a show mapping.
 
 To get started, open a TheCalm episode, start playback, and open CalmSkip from your browser's extensions menu. If the video is embedded on another website, choose its host and use Connect player to grant access to that host. Previously connected players reconnect automatically within TheCalm episode tabs.
 
 Coverage depends on IntroDB's community timestamps. Episodes without usable data keep playing normally. Different video edits can have different timing, so Undo and manual mode are available. Advancing at credits can skip a post-credit scene.
 
-CalmSkip processes the current episode's page and player information to operate. It sends the IMDb series ID, season, and episode to IntroDB to request timestamps. Preferences and cached timings are stored locally. There is no CalmSkip account, advertising, analytics, or developer-operated tracking server. See the privacy policy for the complete data handling details.
+CalmSkip processes the current episode's page and player information to operate. It sends the IMDb series ID, season, and episode to IntroDB to request timestamps. When a series cannot otherwise be identified, it also sends the show title derived from its URL to IntroDB's metadata search. These requests omit cookies, the page referrer, and full page/player URLs. Preferences, show mappings, cached show matches, and cached timings are stored locally. There is no CalmSkip account, advertising, analytics, or developer-operated tracking server. See the privacy policy for the complete data handling details.
 
 Use your existing TheCalm access to watch episodes. CalmSkip does not host, supply, or download videos.
 
@@ -37,7 +38,7 @@ CalmSkip is an independent extension and is not affiliated with or endorsed by T
 | --- | --- |
 | Language | English |
 | Category | Choose the closest entertainment/video category offered by the dashboard. |
-| Website | https://github.com/richhiiee/TheCalm |
+| Website | https://github.com/richhiiee/TheCalm/tree/development |
 | Support | https://github.com/richhiiee/TheCalm/issues |
 | Privacy policy | https://github.com/richhiiee/TheCalm/blob/development/docs/store/PRIVACY.md |
 | Distribution visibility | Public |

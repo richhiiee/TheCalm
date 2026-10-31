@@ -21,8 +21,8 @@ To check Better Call Saul, play from about **6:05** with automatic skipping on; 
 
 An alternative provider's Simpsons marker was also inspected, but its reported confidence was about 0.284, below the extension's 0.9 threshold. It is not used, and the extension's confidence requirement is unchanged. No additional timing provider or host permission was added.
 
-## Development update and store review
+## Development and store updates
 
 Pull the `development` branch, run the existing Windows sync watcher, reload CalmSkip in `brave://extensions`, and reopen the episode. The popup footer should show **v0.1.6**. If the old watcher has not been restarted since the CalmSkip rename, follow the one-time restart in [the Windows guide](DEVELOPMENT_WINDOWS.md#upgrading-the-name-to-calmskip).
 
-The already submitted Chrome Web Store bundle remains **v0.1.5**. These development changes do not upload a replacement, cancel the pending review, or update a store installation automatically.
+[The public Chrome Web Store listing](https://chromewebstore.google.com/detail/calmskip/ffikdfibljniiabnkgpihdpdhheammlo) currently provides **v0.1.5**. Version **0.1.6** is ready for a store update but has not been uploaded. Follow [the existing-listing update guide](CHROME_WEB_STORE.md#update-the-existing-listing-to-016) to package and submit it. Development pushes do not change the public store bundle; store installations receive the newer version after it is submitted, approved, and published.

@@ -2,11 +2,13 @@
 
 A Brave-compatible browser extension that uses [IntroDB](https://introdb.app) community timestamps to skip recaps and intros on **thecalm.site**, and move to the next episode at the credits. It runs in your browser and needs no Netflix account, API key, or backend server.
 
-For development updates without manually replacing ZIPs, see [Windows development setup](docs/DEVELOPMENT_WINDOWS.md). It syncs a local checkout of the `development` branch into the existing Brave installation, with backups. The browser still needs a **Reload** click after extension files change. Registration and later store publishing are covered in [Chrome Web Store setup](docs/CHROME_WEB_STORE.md); a store account is not needed for unpacked development.
+For development updates without manually replacing ZIPs, see [Windows development setup](docs/DEVELOPMENT_WINDOWS.md). It syncs a local checkout of the `development` branch into the existing Brave installation, with backups. The browser still needs a **Reload** click after extension files change. Store installation and publishing are covered in [Chrome Web Store setup](docs/CHROME_WEB_STORE.md); a store account is not needed for unpacked development.
 
-The public store release is prepared as **CalmSkip v0.1.5**, with original icons, demonstration screenshots of the real interface, [listing copy](docs/store/LISTING.md), a [privacy policy](docs/store/PRIVACY.md), and [submission fields](docs/store/SUBMISSION.md). See [the publishing guide](docs/CHROME_WEB_STORE.md#publish-calmskip-015) to package it on Windows and submit it in Google’s dashboard. This repository does not establish store approval or publication.
+[CalmSkip is public in the Chrome Web Store](https://chromewebstore.google.com/detail/calmskip/ffikdfibljniiabnkgpihdpdhheammlo) as **v0.1.5**. The current source is **v0.1.6**, with automatic identification for other shows. That update is ready to package but has not been uploaded to the store. Follow [the existing-listing update guide](docs/CHROME_WEB_STORE.md#update-the-existing-listing-to-016) to submit it; pushing this repository does not update store installations.
 
-## Install in Brave
+## Install the development build in Brave
+
+For the published release, install [CalmSkip from the Chrome Web Store](https://chromewebstore.google.com/detail/calmskip/ffikdfibljniiabnkgpihdpdhheammlo). The following steps install the newer development build as an unpacked extension. Keep one enabled copy when testing.
 
 1. Download and extract `dist/thecalm-skip.zip`, or use this checkout's `extension` directory directly.
 2. Open `brave://extensions`, enable **Developer mode**, and choose **Load unpacked**.
@@ -38,7 +40,7 @@ For a player hosted inside another website's iframe, choose its host under the p
 
 There is no local AI detection or Netflix importer. Identifying a series and finding its timestamps are separate steps: an episode without usable IntroDB timestamps keeps playing normally. See [other-show support](docs/OTHER_SHOWS.md) for the checked Better Call Saul and Simpsons examples.
 
-The pending Chrome Web Store submission is still **v0.1.5**. The other-show improvements are in **development v0.1.6**; pushing source does not change the bundle already submitted to Google.
+The public Chrome Web Store release is **v0.1.5**. The other-show improvements are in **development v0.1.6**, ready for a separate [store update submission](docs/CHROME_WEB_STORE.md#update-the-existing-listing-to-016).
 
 ## Timing checks and limitations
 

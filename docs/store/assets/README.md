@@ -2,6 +2,8 @@
 
 Upload `icon-128.png` as the store icon and the two `screenshot-*.png` files as listing screenshots. Both screenshots are 1280×800 RGB PNGs showing the production extension UI with clearly labeled synthetic demonstration playback. No show footage or posters are included.
 
+The screenshots are refreshed for the 0.1.6 update. Upload them on the existing CalmSkip item with that package; they do not claim that the update is already public.
+
 `icon-source.png` is the original generated artwork. `icon-512.png` is a larger export for future branding. The four runtime PNG sizes are in `extension/icons/` and are included in the extension ZIP.
 
 Regenerate the icon exports and screenshots from this checkout with Node.js, the locked development dependencies, and Chromium:

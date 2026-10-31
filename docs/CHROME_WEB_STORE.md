@@ -22,7 +22,7 @@ The unpacked extension remains the development version:
 - After a change, click **Reload** for CalmSkip in `brave://extensions`, then reopen the episode. An unpacked extension does not automatically reload when its files change.
 - The store account is not used by the sync script. Development updates do not require a store review.
 
-A later store release is a separate workflow:
+A first store release is a separate workflow:
 
 1. Run the tests and package command from the repository, or download the package artifact from a passing **Checks** run in GitHub Actions. Extract the downloaded artifact and use the contained `thecalm-skip.zip` for the store upload.
 2. Prepare the store listing assets, screenshots, description, privacy disclosures, and testing instructions. The existing development ZIP is not proof that those submission requirements are complete.
@@ -41,19 +41,33 @@ All visibility options still undergo Google's review. Do not expect an unlisted 
 
 Brave supports installing Chrome Web Store extensions through the listing's **Add to Brave** button. Once the store version is installed, disable the unpacked development copy when using the store version so two copies do not operate on the same player.
 
-## Publish CalmSkip 0.1.5
+## Update the existing listing to 0.1.6
 
-The prepared release is **public and searchable**. It includes the original mint/teal skip icon and the actual extension interface in clearly labeled demonstration screenshots. These assets do not claim that the demonstration video is a playable episode from TheCalm.
+[CalmSkip is public](https://chromewebstore.google.com/detail/calmskip/ffikdfibljniiabnkgpihdpdhheammlo) at **v0.1.5**. Version **0.1.6** adds automatic series identification beyond Prison Break, show-match selection and correction, and clearer missing-timestamp status. A GitHub push or local sync does not update the store: upload the new ZIP to the **existing item**, then submit that update for review.
 
-Stop an existing watcher with **Ctrl+C** before pulling, because the rename also updates its compatibility checks. Then create the upload ZIP using Windows PowerShell; Node.js and Python are unnecessary for this step:
+Stop an existing watcher with **Ctrl+C** before pulling. In the Windows `development` checkout, create the upload ZIP using PowerShell; Node.js and Python are unnecessary for this step:
 
 ```powershell
 Set-Location "$HOME\source\TheCalm"
 git pull --ff-only
-Compress-Archive -Path .\extension\* -DestinationPath "$HOME\Downloads\CalmSkip-0.1.5.zip" -Force
+Get-Content .\extension\manifest.json | ConvertFrom-Json | Select-Object name, version
+Compress-Archive -Path .\extension\* -DestinationPath "$HOME\Downloads\CalmSkip-0.1.6.zip" -Force
 ```
 
-The ZIP must contain `manifest.json` at its root, alongside the extension scripts and `icons` folder. Upload **CalmSkip-0.1.5.zip** from Downloads using **Add new item** in the developer dashboard.
+Confirm the version output is **0.1.6**. The ZIP must contain `manifest.json` at its root, alongside the extension scripts and `icons` folder.
+
+1. Open the [existing CalmSkip dashboard item](https://chrome.google.com/webstore/devconsole/ab89a478-5b96-48cb-a4d0-1d83c227760c/ffikdfibljniiabnkgpihdpdhheammlo/edit/package).
+2. Under **Package**, choose **Upload new package**, select **CalmSkip-0.1.6.zip** from Downloads, and confirm the draft package version.
+3. Refresh the listing description and screenshots from the files below. In **Privacy**, update the `storage` and IntroDB host explanations to include the title lookup and local show-match cache, using [the submission fields](store/SUBMISSION.md). The data categories, privacy policy URL, and **No remote code** answer remain the same. Version 0.1.6 adds no permissions or hosts.
+4. Retain working private reviewer access instructions and the **Public** distribution setting. Save the draft, then choose **Submit for review**. Leave automatic publication after approval enabled if you want the update released as soon as Google approves it.
+
+The public 0.1.5 listing stays available while Google reviews the update. After 0.1.6 is published, store-installed copies receive it through the browser's normal extension updater; unpacked copies still need their usual sync and reload. Uploading to this existing item preserves its listing URL and users.
+
+The cloud tools cannot operate the signed-in developer dashboard. Preparing this package does not upload, submit, or publish 0.1.6.
+
+## Listing assets and reviewer access
+
+The release is **public and searchable**. It includes the original mint/teal skip icon and the actual extension interface in clearly labeled demonstration screenshots. These assets do not claim that the demonstration video is a playable episode from TheCalm.
 
 Complete the listing with these files from the checkout:
 
@@ -68,7 +82,7 @@ Complete the listing with these files from the checkout:
 
 TheCalm’s playable pages require a signed-in session. Enter working reviewer access instructions privately in Google’s **Test instructions** field before submitting. The extension itself has no account; this release has not created or verified a separate TheCalm review account.
 
-After the actual dashboard fields, assets, account verification, and reviewer access are complete, use **Submit for review**. Google decides approval and publication timing. The cloud tools cannot operate your signed-in developer dashboard, so creating this release package does not upload or submit the item.
+Google decides approval and publication timing. A new package needs another review even though the first version is already public.
 
 To resume local development afterward, use the watch command in [the Windows development guide](DEVELOPMENT_WINDOWS.md#upgrading-the-name-to-calmskip). Keep one enabled extension copy when testing the store build.
 
@@ -79,6 +93,7 @@ To resume local development afterward, use the watch command in [the Windows dev
 - [2-Step Verification requirement](https://developer.chrome.com/docs/webstore/program-policies/two-step-verification)
 - [Distribution and visibility](https://developer.chrome.com/docs/webstore/cws-dashboard-distribution)
 - [Publish in the Chrome Web Store](https://developer.chrome.com/docs/webstore/publish)
+- [Update an existing Chrome Web Store item](https://developer.chrome.com/docs/webstore/update)
 - [Brave: adding extensions](https://support.brave.com/hc/en-us/articles/360017909112-How-can-I-add-extensions-to-Brave)
 
-The account requirements and links above were checked against the official documentation on October 28, 2026. Follow any additional account or verification prompts shown by Google for your circumstances.
+The account requirements were checked against the official documentation on October 28, 2026; the update workflow and public 0.1.5 listing were checked on October 31, 2026. Follow any additional account or verification prompts shown by Google for your circumstances.
